@@ -31,7 +31,7 @@ import sklearn
 import wandb
 import cortex
 
-from JSPUTILS.ANALYSES import hello
+from jsputils import encoding, lesioning, losses, nnutils, nsdorg, paths, plotting, readout, selectivity, statsmodels, training
 
-hello()
+print('finished successfully.')
 
