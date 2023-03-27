@@ -1,3 +1,15 @@
+
+# my conventions
+!/images/*
+!/logs/*
+z-old
+**/Sandbox/*
+**/checkpoints/*
+**/wandb/*
+**/debug/*
+**/STIMULUS_SETS/*
+*.npy
+
 # custom
 .DS_Store
 .env
