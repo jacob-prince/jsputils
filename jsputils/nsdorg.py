@@ -491,3 +491,63 @@ def load_betas(subj, space, voxel_group, ncsnr_threshold = 0.2,
         print(subj_betas[hemi].shape)
   
     return subj_betas, roi_dfs, include_idx, rep_cocos
+
+def get_NSD_train_test_images(subj, train_imageset, test_imageset):
+    
+    stim_info_fn = f'{nsddir}/nsddata/experiments/nsd/nsd_stim_info_merged.csv'
+    stim_info_df = pd.read_csv(stim_info_fn)
+    
+    subjs = [f'subj0{s}' for s in range(1,9)]
+    annotations = load_NSD_coco_annotations(subjs, savedir = paths.nsd_coco_annots())
+    
+    coco_dict = get_coco_dict(subjs, annotations)
+
+    encoding_cocos = dict()
+    try:
+        encoding_cocos['train'] = coco_dict[subj][train_imageset]
+    except:
+        encoding_cocos['train'] = coco_dict[train_imageset]
+    try:
+        encoding_cocos['test'] = coco_dict[subj][test_imageset]
+    except:
+        encoding_cocos['test'] = coco_dict[test_imageset]
+        
+    subj_df = stim_info_df.iloc[stim_info_df[f'subject{subj[-1]}'].values==1]
+
+    rep_indices = np.empty((subj_df.shape[0], 3), dtype=int)
+    rep_cocos = []
+
+    for i in range(rep_indices.shape[0]):
+
+        # subtract 1 to get to 0 indexed
+        rep_indices[i] = np.array([subj_df[f'subject{subj[-1]}_rep{r}'].values[i] for r in range(3)]) - 1
+
+        rep_cocos.append(subj_df['cocoId'].values[i])
+
+    rep_cocos = np.array(rep_cocos)
+
+    nc = dict()
+    nc['train'] = len(encoding_cocos['train'])
+    nc['test'] = len(encoding_cocos['test'])
+    
+    # access nsd stimuli
+    stim_f = h5py.File(f'{paths.nsd_stimuli()}/nsd_stimuli.hdf5', 'r')
+    dim = stim_f['imgBrick'].shape
+
+    image_data = dict()
+
+    for partition in ['train','test']:
+
+        image_data[partition] = np.empty((nc[partition], dim[1], dim[2], dim[3]), dtype=np.uint8)
+
+        for c, coco in enumerate(progress_bar(encoding_cocos[partition])):
+
+            # where in the brain data does this coco live?
+            idx10k = np.squeeze(np.argwhere(rep_cocos == coco))
+
+            # where in the stimulus brick does this coco live?
+            idx73k = stim_info_df.iloc[stim_info_df['cocoId'].values == coco]['nsdId'].values[0]
+
+            image_data[partition][c] = stim_f['imgBrick'][idx73k]
+  
+    return image_data

@@ -291,7 +291,7 @@ def fit_save_encoding_model(encoding_inputs):
         fit_model = True
         
     if fit_model:
-        print('\t\t\trunning encoding model')
+        #print('\t\t\trunning encoding model')
         
         mdl = Lasso(positive=True, alpha = 0.1, random_state = 365, 
                     selection = 'random', tol = 1e-3, fit_intercept=True)

@@ -69,7 +69,7 @@ def load_alexnet_dropout_model(sweep, dropout_prop, learning_rate, lr_peak):
     weight_fn = f'{this_model_dir}/{os.listdir(this_model_dir)[0]}/final_weights.pt'
     assert(exists(weight_fn))
 
-    model = alexnet_dropout.AlexNet(dropout = dropout_prop).eval()
+    model = models.AlexNet(dropout = dropout_prop).eval()
 
     state_dict = torch.load(weight_fn)
     state_dict = {str.replace(k,'module.',''): v for k,v in state_dict.items()}
