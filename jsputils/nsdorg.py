@@ -122,7 +122,7 @@ def load_NSD_coco_annotations(subjs, savedir):
                                   df[f'subject{subj[-1]}_rep2'].values)).T
 
             subj_cocos = []
-            for i in progress_bar(range(1,750*this_subsess+1)):
+            for i in range(1,750*this_subsess+1):
                 idx = np.argwhere(subj_ids == i)[0][0]
                 subj_cocos.append(df.iloc[idx]['cocoId'])
 
@@ -135,7 +135,7 @@ def load_NSD_coco_annotations(subjs, savedir):
             all_areas = []
             all_captions = []
 
-            for cocoid in progress_bar(subj_cocos):
+            for cocoid in subj_cocos:
 
                 this_scats = []
                 this_cats = []
@@ -335,23 +335,58 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
                              'FBA-2':      ('floc-bodies.label', 'FBA-2'),
                              'VWFA-1':     ('floc-words.label',  'VWFA-1'),
                              'VWFA-2':     ('floc-words.label',  'VWFA-2'),
-                             'OWFA':       ('floc-words.label',  'OWFA')}}
+                             'OWFA':       ('floc-words.label',  'OWFA'),
+                             'OTC':        (None, None)},
+                       'func1pt8mm':
+                            {'nsdgeneral': ('nsdgeneral',        1),
+                             'FFA-1':      ('floc-faces.label',  'FFA-1'),
+                             'FFA-2':      ('floc-faces.label',  'FFA-2'),
+                             'OFA':        ('floc-faces.label',  'OFA'),
+                             'PPA':        ('floc-places.label', 'PPA'),
+                             'OPA':        ('floc-places.label', 'OPA'),
+                             'EBA':        ('floc-bodies.label', 'EBA'),
+                             'FBA-1':      ('floc-bodies.label', 'FBA-1'),
+                             'FBA-2':      ('floc-bodies.label', 'FBA-2'),
+                             'VWFA-1':     ('floc-words.label',  'VWFA-1'),
+                             'VWFA-2':     ('floc-words.label',  'VWFA-2'),
+                             'OWFA':       ('floc-words.label',  'OWFA'),
+                             'early-visual': ('prf-visualrois', 1)}
+                       }
+                       
     
     field, incl_val = voxel_group_info[space][voxel_group]
     
     include_idx = dict()
 
     if space == 'func1pt8mm':
-        raise ValueError('func1pt8mm not implemented yet.')
+        if voxel_group == 'early-visual':
+            include_idx['full'] = np.logical_and(roi_dfs[0][field].values >= incl_val, 
+                                                 roi_dfs[0]['ncsnr'].values > ncsnr_threshold)
+        else:
+            include_idx['full'] = np.logical_and(roi_dfs[0][field].values == incl_val, 
+                                                 roi_dfs[0]['ncsnr'].values > ncsnr_threshold)
 
     elif space == 'nativesurface':
         
         hemis = ['lh', 'rh']
         
-        for h, hemi in enumerate(hemis): 
-            
-            include_idx[hemi] = np.logical_and(roi_dfs[h][f'{hemi}.{field}'].values == incl_val,
-                                               roi_dfs[h][f'{hemi}.ncsnr'].values > ncsnr_threshold)
+        if voxel_group == 'early-visual':
+            raise NotImplementedError()
+        elif voxel_group == 'OTC':
+            for h, hemi in enumerate(hemis):
+                tmp = roi_dfs[h]
+                streams = tmp[f'{hemi}.streams.label'].values
+                nsdgeneral = tmp[f'{hemi}.nsdgeneral'].values
+                ncsnr = tmp[f'{hemi}.ncsnr'].values
+                include_idx[hemi] = np.logical_and(np.logical_and(nsdgeneral == 1,
+                np.isin(streams,np.array(['lateral','midlateral','midventral','ventral']))),
+                     ncsnr > ncsnr_threshold)
+        else:
+        
+            for h, hemi in enumerate(hemis): 
+
+                include_idx[hemi] = np.logical_and(roi_dfs[h][f'{hemi}.{field}'].values == incl_val,
+                                                   roi_dfs[h][f'{hemi}.ncsnr'].values > ncsnr_threshold)
 
             #if np.sum(include_idx[hemi]) == 0:
             #    set_trace()
@@ -359,7 +394,6 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
         include_idx['full'] = np.concatenate((include_idx['lh'], include_idx['rh']))
         
     ### plot 
-    
     plot_data = include_idx['full']
 
     if plot:
@@ -371,7 +405,14 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
         
         
     return include_idx
-    
+
+def get_subj_dims(subj):
+    fn = f'{nsddir}/nsddata/ppdata/{subj}/func1pt8mm/mean.nii.gz'
+    return nib.load(fn).get_fdata().shape
+
+def tuple_str_to_int(tup):
+    int_tuple = tuple(map(int, tup.strip('()').split(',')))
+    return int_tuple
 
 def load_betas(subj, space, voxel_group, ncsnr_threshold = 0.2,
                         beta_version = 'betas_fithrf_GLMdenoise_RR',
@@ -379,47 +420,58 @@ def load_betas(subj, space, voxel_group, ncsnr_threshold = 0.2,
     
     
     betadir = f'{nsddir}/nsddata_betas/ppdata/{subj}/{space}/{beta_version}'        
-        
+
     stim_info_fn = f'{nsddir}/nsddata/experiments/nsd/nsd_stim_info_merged.csv'
     stim_info_df = pd.read_csv(stim_info_fn)
-    
+
     roi_dfs = load_voxel_info(subj, space, beta_version)
-    
+
     if space == 'nativesurface':
-        
+
         hemis = ['lh', 'rh']
 
         for h, hemi in enumerate(hemis):
             indices = np.array([f'({hemi}, {i})' for i in np.arange(roi_dfs[h].shape[0])])
             roi_dfs[h].index = indices
+
     elif space == 'func1pt8mm':
-        raise ValueError('func1pt8mm not implemented yet.')
-                    
+
+        hemis = ['full']
+
+        subj_dims = get_subj_dims(subj)
+        indices = np.empty(subj_dims, dtype=object)
+        mask = np.zeros(subj_dims)
+        for i in range(subj_dims[0]):
+            for j in range(subj_dims[1]):
+                for k in range(subj_dims[2]):
+                    indices[i,j,k] = f'({i},{j},{k})'
+
+        roi_dfs[0].index = indices.reshape(-1)
+
     ###############
-        
+
     include_idx = get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = plot)
-    
+
+    if space == 'func1pt8mm':
+        for vox in range(np.sum(include_idx['full'])):
+            x,y,z = tuple_str_to_int(roi_dfs[0].loc[include_idx['full']].index[vox])
+            mask[x,y,z] = 1
+        mask = mask.transpose(2,1,0).astype(int)
+
     nv = dict()
     nincl = dict()
 
-    if space == 'nativesurface':
+    for h, hemi in enumerate(hemis):
+        nv[hemi] = roi_dfs[h].shape[0]
+        nincl[hemi] = len(np.squeeze(np.argwhere(include_idx[hemi])))
 
-        for h, hemi in enumerate(hemis):
-            nv[hemi] = roi_dfs[h].shape[0]
-            nincl[hemi] = len(np.squeeze(np.argwhere(include_idx[hemi])))
-                              
-    elif space == 'func1pt8mm':
-        raise ValueError('func1pt8mm not implemented yet.')
-        
-        
     ####### load betas
-    
+
     betafiles = os.listdir(betadir)
     betafiles = np.sort([fn for fn in betafiles if 'betas_session' in fn])
 
     subj_nses = int(betafiles[-1][-7:-5])
     subj_nstim = 750 * subj_nses
-    
     
     subj_betas = dict()
 
@@ -439,7 +491,7 @@ def load_betas(subj, space, voxel_group, ncsnr_threshold = 0.2,
         if space == 'nativesurface':
             hemi_betafiles = np.sort([fn for fn in betafiles if hemi in fn])
         elif space == 'func1pt8mm':
-            raise ValueError('func1pt8mm not implemented yet')
+            hemi_betafiles = np.sort(betafiles)
 
         # iterate through sessions
         for betafile in progress_bar(hemi_betafiles):
@@ -448,17 +500,29 @@ def load_betas(subj, space, voxel_group, ncsnr_threshold = 0.2,
 
             f = h5py.File(f'{betadir}/{betafile}', 'r')
 
-            # iterate through included voxels (for speed)
-            for vox in range(nincl[hemi]):
+            if space == 'nativesurface':
 
-                # add voxels to preallocated data matrices
-                if space == 'nativesurface':
+                # iterate through included voxels (for speed)
+                for vox in range(nincl[hemi]):
+
+                    # add voxels to preallocated data matrices
                     subj_betas[hemi][start_idx : start_idx + 750, vox] = stats.zscore(f['betas'][:, load_idx[vox]].astype(float) / 300)
-                elif space == 'func1pt8mm':
-                    raise ValueError('func1pt8mm not implemented yet')
-                    
+
+            elif space == 'func1pt8mm':
+
+                # method for large ROIs
+                if np.sum(include_idx[hemi]) > 2500:
+                    session_betas = f['betas'][:]
+                    subj_betas[hemi][start_idx : start_idx + 750] = stats.zscore(session_betas[:,mask == 1].astype(float) / 300, axis = 0)
+                else:
+                    for vox in range(nincl[hemi]):
+                        x,y,z = tuple_str_to_int(roi_dfs[0].loc[include_idx['full']].index[vox])
+                        subj_betas[hemi][start_idx : start_idx + 750, vox] = stats.zscore(f['betas'][:,x,y,z].astype(float) / 300)
+
+            f.close()
+
             start_idx += 750
-            
+
         if subj_betas[hemi].shape[0] < 30000:
 
             n_missing = 30000 - subj_betas[hemi].shape[0]
@@ -468,7 +532,7 @@ def load_betas(subj, space, voxel_group, ncsnr_threshold = 0.2,
             print(subj_betas[hemi].shape)
             
     ######## group repetitions together
-    
+        
     subj_df = stim_info_df.iloc[stim_info_df[f'subject{subj[-1]}'].values==1]
 
     rep_indices = np.empty((subj_df.shape[0], 3), dtype=int)
@@ -540,7 +604,7 @@ def get_NSD_train_test_images(subj, train_imageset, test_imageset):
 
         image_data[partition] = np.empty((nc[partition], dim[1], dim[2], dim[3]), dtype=np.uint8)
 
-        for c, coco in enumerate(progress_bar(encoding_cocos[partition])):
+        for c, coco in enumerate(encoding_cocos[partition]):
 
             # where in the brain data does this coco live?
             idx10k = np.squeeze(np.argwhere(rep_cocos == coco))
@@ -551,3 +615,69 @@ def get_NSD_train_test_images(subj, train_imageset, test_imageset):
             image_data[partition][c] = stim_f['imgBrick'][idx73k]
   
     return image_data
+
+def get_NSD_train_test_images_and_betas(subj, space, subj_betas, rep_cocos, train_imageset, test_imageset, mean = True):
+    
+    if space == 'nativesurface':
+        hemis = ['lh','rh']
+    elif space == 'func1pt8mm':
+        hemis = ['full']
+        
+    stim_info_fn = f'{nsddir}/nsddata/experiments/nsd/nsd_stim_info_merged.csv'
+    stim_info_df = pd.read_csv(stim_info_fn)
+    
+    subjs = [f'subj0{s}' for s in range(1,9)]
+    annotations = load_NSD_coco_annotations(subjs, savedir = paths.nsd_coco_annots())
+    
+    coco_dict = get_coco_dict(subjs, annotations)
+
+    encoding_cocos = dict()
+    try:
+        encoding_cocos['train'] = coco_dict[subj][train_imageset]
+    except:
+        encoding_cocos['train'] = coco_dict[train_imageset]
+    try:
+        encoding_cocos['test'] = coco_dict[subj][test_imageset]
+    except:
+        encoding_cocos['test'] = coco_dict[test_imageset]
+
+    nc = dict()
+    nc['train'] = len(encoding_cocos['train'])
+    nc['test'] = len(encoding_cocos['test'])
+    
+    # access nsd stimuli
+    stim_f = h5py.File(f'{paths.nsd_stimuli()}/nsd_stimuli.hdf5', 'r')
+    dim = stim_f['imgBrick'].shape
+
+    image_data = dict()
+    brain_data = dict()
+
+    for partition in ['train','test']:
+
+        image_data[partition] = np.empty((nc[partition], dim[1], dim[2], dim[3]), dtype=np.uint8)
+        brain_data[partition] = dict()
+
+        for hemi in hemis:
+            brain_data[partition][hemi] = np.empty((nc[partition], 3, subj_betas[hemi].shape[2]), dtype=float)
+
+        for c, coco in enumerate(encoding_cocos[partition]):
+
+            # where in the brain data does this coco live?
+            idx10k = np.squeeze(np.argwhere(rep_cocos == coco))
+
+            # where in the stimulus brick does this coco live?
+            idx73k = stim_info_df.iloc[stim_info_df['cocoId'].values == coco]['nsdId'].values[0]
+
+            image_data[partition][c] = stim_f['imgBrick'][idx73k]
+
+            for hemi in hemis:
+                brain_data[partition][hemi][c] = subj_betas[hemi][idx10k]
+
+        for hemi in hemis:
+            
+            if mean:
+                # need nanmean in case subject is missing data
+                brain_data[partition][hemi] = np.nanmean(brain_data[partition][hemi], axis = 1)
+            print(partition, hemi, image_data[partition].shape, brain_data[partition][hemi].shape)
+            
+    return image_data, brain_data

@@ -202,3 +202,96 @@ def convert_relu(parent):
             setattr(parent, child_name, nn.ReLU(inplace=False))
         elif len(list(child.children())) > 0:
             convert_relu(child)
+            
+            
+### todo: refactor/eliminate need for this
+
+def get_layer_names(model):
+    
+    lay_names_torch = []
+    lay_names_user = []
+    lay_conv_strs = []
+    lay_modules = []
+    
+    layers = list(model.named_modules())
+    
+    count = 1
+    conv_count = 0
+
+    for i in range(1,len(layers)):
+        
+        module_type = layers[i][1].__class__.__name__
+
+        nonbasic_types = np.array(['Sequential','BasicBlock','Bottleneck','Fire',
+                                 '_DenseBlock', '_DenseLayer', 'Transition', '_Transition','InvertedResidual','_InvertedResidual','ConvBNReLU','CORblock_Z','CORblock_S','CORblock'])
+
+        conv_types = ['Conv','Linear']
+
+        if np.logical_not(np.isin(module_type, nonbasic_types)):
+
+            # get layer naming info
+            lay_names_torch.append(layers[i][0])
+            lay_names_user.append(str(count) + '_' + str(layers[i][1]).split('(')[0])
+
+            # get conv tag
+            if any(s in lay_names_user[-1] for s in conv_types) and 'downsample' not in lay_names_torch[-1]:
+                conv_count += 1
+            lay_conv_strs.append(str(conv_count))
+
+            # update
+            lay_names_user[-1] = lay_names_user[-1] + '_' + lay_conv_strs[-1]
+            
+            lay_modules.append(layers[i][1])
+
+            count += 1
+    
+    lay_names_user_fmt = []
+    
+    c = 0
+    for lay in lay_names_user:
+        lay_type = lay.split('_')[1]
+        
+        if 'Conv' in lay_type:
+            if 'downsample' in lay_names_torch[c]:
+                fmt = 'downsample'
+            elif 'skip' in lay_names_torch[c]:
+                fmt = 'conv_skip'
+            else:
+                fmt = 'conv'
+        elif 'Norm' in lay_type:
+            if 'skip' in lay_names_torch[c]:
+                fmt = 'norm_skip'
+            else:
+                fmt = 'norm'
+        elif 'ReLU' in lay_type:
+            fmt = 'relu'
+        elif 'MaxPool' in lay_type:
+            fmt = 'maxpool'
+        elif 'AvgPool' in lay_type:
+            fmt = 'avgpool'
+        elif 'Linear' in lay_type:
+            fmt = 'fc'
+        elif 'Dropout' in lay_type:
+            fmt = 'drop'
+        elif 'Identity' in lay_type:
+            fmt = 'identity'
+        elif 'Flatten' in lay_type:
+            fmt = 'flatten'
+        elif 'Lesion' in lay_type:
+            fmt = 'lesion'
+        elif 'Sigmoid' in lay_type:
+            fmt = 'sigmoid'
+        elif 'Inception' in lay_type:
+            fmt = 'inception'
+        elif 'SelectAdaptivePool2d' in lay_type:
+            fmt = 'adaptivepool'
+        else:
+            print(lay_type)
+            raise ValueError('fmt not implemented yet')
+        c+=1
+        
+        lay_names_user_fmt.append(lay.split('_')[0] + '_' + fmt + lay.split('_')[2])
+
+    #print(lay_names_user_fmt)
+        
+    return lay_names_torch, lay_names_user, lay_names_user_fmt, lay_modules

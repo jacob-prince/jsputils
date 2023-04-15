@@ -95,7 +95,7 @@ def main():
                                                                     ncsnr_threshold = args.ncsnr_threshold,
                                                                     plot=True)
     
-    image_data, brain_data = get_NSD_train_test_images_and_betas(subj = args.subj,
+    image_data, brain_data = nsdorg.get_NSD_train_test_images_and_betas(subj = args.subj,
                                                  space = args.space,
                                                  subj_betas = subj_betas,
                                                  rep_cocos = rep_cocos,
@@ -208,70 +208,6 @@ def main():
     print('...done.')
     
     return
-    
-def get_NSD_train_test_images_and_betas(subj, space, subj_betas, rep_cocos, train_imageset, test_imageset):
-    
-    if space == 'nativesurface':
-        hemis = ['lh','rh']
-    elif space == 'func1pt8mm':
-        hemis = ['full']
-        
-    stim_info_fn = f'{nsddir}/nsddata/experiments/nsd/nsd_stim_info_merged.csv'
-    stim_info_df = pd.read_csv(stim_info_fn)
-    
-    subjs = [f'subj0{s}' for s in range(1,9)]
-    annotations = nsdorg.load_NSD_coco_annotations(subjs, savedir = paths.nsd_coco_annots())
-    
-    coco_dict = nsdorg.get_coco_dict(subjs, annotations)
-
-    encoding_cocos = dict()
-    try:
-        encoding_cocos['train'] = coco_dict[subj][train_imageset]
-    except:
-        encoding_cocos['train'] = coco_dict[train_imageset]
-    try:
-        encoding_cocos['test'] = coco_dict[subj][test_imageset]
-    except:
-        encoding_cocos['test'] = coco_dict[test_imageset]
-
-    nc = dict()
-    nc['train'] = len(encoding_cocos['train'])
-    nc['test'] = len(encoding_cocos['test'])
-    
-    # access nsd stimuli
-    stim_f = h5py.File(f'{paths.nsd_stimuli()}/nsd_stimuli.hdf5', 'r')
-    dim = stim_f['imgBrick'].shape
-
-    image_data = dict()
-    brain_data = dict()
-
-    for partition in ['train','test']:
-
-        image_data[partition] = np.empty((nc[partition], dim[1], dim[2], dim[3]), dtype=np.uint8)
-        brain_data[partition] = dict()
-
-        for hemi in hemis:
-            brain_data[partition][hemi] = np.empty((nc[partition], 3, subj_betas[hemi].shape[2]), dtype=float)
-
-        for c, coco in enumerate(progress_bar(encoding_cocos[partition])):
-
-            # where in the brain data does this coco live?
-            idx10k = np.squeeze(np.argwhere(rep_cocos == coco))
-
-            # where in the stimulus brick does this coco live?
-            idx73k = stim_info_df.iloc[stim_info_df['cocoId'].values == coco]['nsdId'].values[0]
-
-            image_data[partition][c] = stim_f['imgBrick'][idx73k]
-
-            for hemi in hemis:
-                brain_data[partition][hemi][c] = subj_betas[hemi][idx10k]
-
-        for hemi in hemis:
-            # need nanmean in case subject is missing data
-            brain_data[partition][hemi] = np.nanmean(brain_data[partition][hemi], axis = 1)
-            print(partition, hemi, image_data[partition].shape, brain_data[partition][hemi].shape)
-            
-    return image_data, brain_data
 
 
 def fit_save_encoding_model(encoding_inputs):

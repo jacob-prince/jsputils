@@ -53,6 +53,50 @@ num_classes = 1000
 lr_tta = 1
 resolution = 256
 
+def get_imagenet_class_accuracies(model, val_dataloader, device, topk = 5):
+    
+    model.eval()
+    
+    true_labels = []
+    pred_labels = []
+        
+    start = time.time()
+    
+    all_labels = []
+    
+    with ch.no_grad():
+        with autocast():
+            for imgs, target, _, _ in progress_bar(val_dataloader):
+
+                imgs = imgs.to(device)
+                with ch.no_grad():
+                    out = model(imgs)
+
+                    true_labels.append(target.detach().cpu().numpy())
+
+                    _, preds = out.topk(k=topk, dim=1, largest=True, sorted=True)
+                    pred_labels.append(preds.detach().cpu().numpy())
+            
+    categs = np.sort(np.unique(np.concatenate(true_labels)))
+    
+    assert(len(categs) == 1000)
+    
+    all_pred_labels = np.vstack(pred_labels)
+    all_true_labels = np.concatenate(true_labels)
+
+    all_c_accs = np.zeros((len(categs),))
+
+    for c in categs:
+        idx = np.argwhere(all_true_labels == c) # which indices are from this category?
+        
+        if topk > 1:
+            all_c_accs[c] = np.mean(np.sum(np.squeeze(all_pred_labels[idx] == c),axis=1))
+        elif topk == 1:
+            all_c_accs[c] = np.mean(all_pred_labels[idx] == c)
+                    
+    return all_c_accs, all_pred_labels, all_true_labels
+
+
 def validate_trained_model(model_dir, dropout_prop, learning_rate, lr_peak,
                            device):
     
@@ -69,7 +113,7 @@ def validate_trained_model(model_dir, dropout_prop, learning_rate, lr_peak,
     weight_fn = f'{this_model_dir}/{os.listdir(this_model_dir)[0]}/final_weights.pt'
     assert(exists(weight_fn))
     
-    model = alexnet_dropout.AlexNet(dropout = dropout_prop).eval()
+    model = models.AlexNet(dropout = dropout_prop).eval()
 
     state_dict = ch.load(weight_fn)
     state_dict = {str.replace(k,'module.',''): v for k,v in state_dict.items()}
