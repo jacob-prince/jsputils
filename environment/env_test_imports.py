@@ -24,11 +24,17 @@ from ffcv.transforms import RandomHorizontalFlip, Cutout, \
     RandomTranslate, Convert, ToDevice, ToTensor, ToTorchImage
 from ffcv.transforms.common import Squeeze
 from ffcv.writer import DatasetWriter
-
+import gc
 import torch
 
 x = torch.rand(100)
-x.shape
+
+x.to('cuda:0')
+
+del x 
+
+torch.cuda.empty_cache()
+gc.collect()
 
 import sklearn
 import pandas as pd

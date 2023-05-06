@@ -2,9 +2,11 @@
 
 envname=$1
 
+pip install --upgrade pip
+
 conda deactivate
 
-mamba create -y -n $envname python=3.9 cupy pkg-config compilers libjpeg-turbo opencv pytorch torchvision torchaudio pytorch-cuda=11.7 numba -c pytorch -c nvidia -c conda-forge
+mamba create -y -n $envname python=3.9 cupy=11.6 pkg-config compilers libjpeg-turbo opencv pytorch-gpu cudatoolkit=11.7 torchvision torchaudio pytorch-cuda=11.7 numba -c pytorch -c nvidia -c conda-forge
 
 conda activate $envname
 
