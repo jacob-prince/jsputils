@@ -9,6 +9,7 @@ z-old
 **/debug/*
 **/STIMULUS_SETS/*
 *.npy
+**/notebooks/*
 
 # custom
 .DS_Store
