@@ -66,7 +66,7 @@ def get_imagenet_class_accuracies(model, val_dataloader, device, topk = 5):
     
     with ch.no_grad():
         with autocast():
-            for imgs, target, _, _ in progress_bar(val_dataloader):
+            for imgs, target, _, _ in val_dataloader:
 
                 imgs = imgs.to(device)
                 with ch.no_grad():
@@ -93,8 +93,78 @@ def get_imagenet_class_accuracies(model, val_dataloader, device, topk = 5):
             all_c_accs[c] = np.mean(np.sum(np.squeeze(all_pred_labels[idx] == c),axis=1))
         elif topk == 1:
             all_c_accs[c] = np.mean(all_pred_labels[idx] == c)
+            
+    del imgs, out, preds, target
+    ch.cuda.empty_cache()
+    gc.collect()
                     
-    return all_c_accs, all_pred_labels, all_true_labels
+    return all_c_accs #, all_pred_labels, all_true_labels
+
+
+def get_selective_unit_acts(model, selective_units, layer_names, val_dataloader, device):
+    
+    floc_domains = selective_units['floc_domains']
+    domain_mean_acts = dict()
+    for domain in floc_domains:
+        domain_mean_acts[domain] = dict()
+        for layer in layer_names:
+            domain_mean_acts[domain][layer] = []
+            
+    start = time.time()
+    count = 0
+            
+    all_labels = []
+    
+    with ch.no_grad():
+        with autocast():
+            for imgs, target, _, _ in progress_bar(val_dataloader):
+
+                imgs = imgs.to(device)
+                out, acts = model(imgs)
+
+                for layer in layer_names:
+
+                    for domain in floc_domains:
+
+                        ac = acts[layer].detach().clone()
+                        this_mask = selective_units[domain][layer]['mask']
+                        ac_masked = ac[:,this_mask == 0]
+                        mean_act = torch.mean(ac_masked, axis=1)
+
+                        domain_mean_acts[domain][layer].append(mean_act)
+            
+        count += imgs.shape[0]
+        
+        all_labels.append(labels.detach().clone())
+        
+    all_labels = torch.cat(all_labels).cpu().numpy()
+    
+    all_layer_mean_acts = dict()
+    
+    for domain in floc_domains:
+
+        all_layer_mean_acts[domain] = dict()
+
+        for lay in model.layer_names:
+            c_acts = np.zeros((1000,))
+            
+            all_mean_acts = torch.cat(domain_mean_acts[domain][lay]).cpu().numpy()
+
+            for c in range(1000):
+                idx = np.argwhere(all_labels == c)
+                c_acts[c] = np.nanmean(all_mean_acts[idx])
+
+            all_layer_mean_acts[domain][lay] = c_acts
+            
+    end = time.time()
+    dur = end - start
+    print(f"==> dur={dur}s")
+
+    return all_layer_mean_acts#, all_labels
+            
+    
+
+
 
 
 def validate_trained_model(model_dir, dropout_prop, learning_rate, lr_peak,

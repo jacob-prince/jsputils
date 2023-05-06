@@ -394,14 +394,20 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
         include_idx['full'] = np.concatenate((include_idx['lh'], include_idx['rh']))
         
     ### plot 
-    plot_data = include_idx['full']
+    plot_data = np.concatenate((roi_dfs[0][f'lh.ncsnr'].values, 
+                                roi_dfs[1][f'rh.ncsnr'].values))
+    plot_data[include_idx['full'] == 0] = np.nan
+    #np.concatenate((include_idx['lh'], include_idx['rh']))
+    #plot_data[plot_data == 1] = np.concatenate((roi_dfs[0][f'lh.ncsnr'].values, 
+    #                                            roi_dfs[1][f'rh.ncsnr'].values))[plot_data == 1]
+    #plot_data = include_idx['full']
 
     if plot:
         
         volume = plotting.plot_ROI_flatmap(subj,space,
                                             f'# total voxels for {subj}, {voxel_group}: {np.sum(plot_data)}',plot_data,
-                                           vmin=np.min(plot_data),
-                                           vmax=np.max(plot_data))
+                                           vmin=0,#np.nanmin(plot_data),
+                                           vmax=1)#np.nanmax(plot_data))
         
         
     return include_idx
@@ -551,7 +557,7 @@ def load_betas(subj, space, voxel_group, ncsnr_threshold = 0.2,
     for hemi in hemis:
     
         # conditions x repetitions x voxels/vertices
-        subj_betas[hemi] = subj_betas[hemi][rep_indices]
+        subj_betas[hemi] = np.float32(subj_betas[hemi][rep_indices])
         print(subj_betas[hemi].shape)
   
     return subj_betas, roi_dfs, include_idx, rep_cocos

@@ -4,12 +4,12 @@ import matplotlib.pyplot as plt
 from jsputils import nnutils, nsdorg
 from IPython.core.debugger import set_trace
 
-def plot_ROI_flatmap(subj, space, roi_group, included_voxels, mapper='nearest',vmin=0,vmax=1,cmap='Spectral_r',colorbar=True):
+def plot_ROI_flatmap(subj, space, roi_group, included_voxels, mapper='nearest',vmin=0,vmax=1,cmap='magma',colorbar=True):
 
     if space == 'nativesurface':
         plot_data = cortex.Vertex(included_voxels, subj, cmap=cmap,
-                                        vmin=vmax,
-                                        vmax=vmin)
+                                        vmin=vmin,
+                                        vmax=vmax,recache=True)
     elif space == 'func1pt8mm':
         subj_dims = nsdorg.get_subj_dims(subj)
         included_voxels = np.swapaxes(included_voxels.reshape(subj_dims),0,2)
@@ -35,24 +35,13 @@ def plot_selective_unit_props(selective_unit_dict):
     FDR_p = selective_unit_dict['FDR_p']
     
     target_layers = list(selective_unit_dict[domains[0]].keys())
-    
-    if floc_imageset == 'vpnl-floc':
 
-        colors = {'faces':'tomato',
-                  'bodies':'dodgerblue',
-                  'objects':'orange',
-                  'scenes':'limegreen',
-                  'characters':'purple',
-                  'scrambled':'navy'}
-
-    elif floc_imageset == 'classic-categ':
-
-        colors = {'Faces':'tomato',
-                  'Bodies':'dodgerblue',
-                  'Scenes':'limegreen',
-                  'Words':'purple',
-                  'Objects':'orange',
-                  'Scrambled':'navy'}
+    colors = {'faces':'tomato',
+              'bodies':'dodgerblue',
+              'objects':'orange',
+              'scenes':'limegreen',
+              'characters':'purple',
+              'scrambled':'navy'}
 
     floc_colors = [x[1] for x in colors]
     floc_domains = [x[0] for x in colors]

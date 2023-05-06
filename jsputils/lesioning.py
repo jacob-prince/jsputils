@@ -1,3 +1,6 @@
+import numpy as np
+import copy
+import gc
 import torch
 from torch import nn
 from jsputils import nnutils
@@ -19,6 +22,7 @@ def lesion(x,mask,apply):
     
 def transfer_modules(from_model, to_model):
     
+    # todo: refactor
     _, _, layers_fmt, modules = nnutils.get_layer_names(from_model)
     
     for i in range(len(modules)):
@@ -27,21 +31,68 @@ def transfer_modules(from_model, to_model):
 
     return to_model
 
+
+def get_layer_dims(model, device):
+    
+    tmp_model = copy.deepcopy(model).eval()
+    tmp_model.return_acts = True
+    tmp_model.target_layers = tmp_model.layer_names
+
+    tmp_img = torch.ones(1,3,256,256).to(device)
+    _, tmp_acts = tmp_model(tmp_img)
+
+    lay_dims = dict()
+    for lay in tmp_model.target_layers:
+        lay_dims[lay] = tmp_acts[lay].size()[1:]
+
+    del tmp_model, tmp_img, tmp_acts
+
+    torch.cuda.empty_cache()
+    gc.collect()
+    
+    return lay_dims
+
+def layer_random_lesioning_mask(layer, lay_dims, p = 0.5):
+    dims = lay_dims[layer]
+    n_zeros = int(np.round(np.prod(dims) * p))
+    mask = torch.ones(dims).flatten()
+    mask[:n_zeros] = 0
+    return nnutils.shuffle_tensor(mask.view(dims))
+
+def get_random_lesioning_masks(model, lay_dims, lsn_layer, device, p):
+    lsn_masks = dict()
+
+    assert(lsn_layer in model.layer_names)
+    
+    for layer in model.layer_names:
+
+        if layer == lsn_layer:
+            mask = layer_random_lesioning_mask(layer, lay_dims, p)
+        else:
+            mask = torch.ones(lay_dims[layer])
+            
+        lsn_masks[layer] = mask.to(device)
+        #print(layer, torch.mean(lsn_masks[layer]))
+
+    lsn_masks['apply'] = True
+    
+    return lsn_masks
+
 class LesionNet(nn.Module):
     
     def __init__(self, source_model, masks, num_classes = 1000, target_layers = None,
-                return_acts = True): # default for imagenet clf
+                return_acts = False): # default for imagenet clf
         super(LesionNet, self).__init__()
         
         self = transfer_modules(source_model, self) # transfer modules from source model
-    
+
         # deal with masks
         self.masks = masks
         
-        self.layers, _, self.layers_fmt, _ = nnutils.get_layer_names(self)
+        self.layer_names, _, self.layers_fmt, _ = nnutils.get_layer_names(self)
         
         if target_layers is None:
-            self.target_layers = self.layers
+            self.target_layers = self.layer_names
         else:
             self.target_layers = target_layers
             
@@ -55,9 +106,9 @@ class LesionNet(nn.Module):
         fc_flag = False # for knowing when to flatten (won't work for models that "widen" e.g. autoencoders)
         
         # for each layer
-        for i in range(len(self.layers)):
+        for i in range(len(self.layer_names)):
             
-            layer = self.layers[i]            
+            layer = self.layer_names[i]            
 
             # apply that layer's forward attribute
             operation = getattr(self,layer)
@@ -71,7 +122,7 @@ class LesionNet(nn.Module):
 
             # get the mask for that layer, and tile along the image dimension
             if self.masks['apply'] == True:
-                if layer != self.layers[-1]:
+                if layer != self.layer_names[-1]:
                     mask = self.masks[layer].repeat(x.shape[0],1,1,1)
                 else:
                     mask = self.masks[layer]
@@ -90,7 +141,7 @@ class LesionNet(nn.Module):
                 activations[layer] = x
             
             # flatten if necessary -> do it before the first linear
-            if fc_flag is False and ('fc' in self.layers[i+1] or 'linear' in self.layers[i+1]):
+            if fc_flag is False and ('fc' in self.layer_names[i+1] or 'linear' in self.layer_names[i+1]):
                 x = torch.flatten(x, 1)
                 fc_flag = True
                 

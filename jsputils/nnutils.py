@@ -8,8 +8,10 @@ import torchlens as tl
 import numpy as np
 import copy
 import pandas as pd
+import gc
 import scipy.stats as stats
 from fastprogress import progress_bar
+from IPython.core.debugger import set_trace
 
 from torchvision.transforms._presets import ImageClassification
 
@@ -17,24 +19,35 @@ from jsputils import paths, models
 
 def load_model(model_name):
     
-    if model_name == 'alexnet-supervised':
+    if 'alexnet-supervised' in model_name:
         
-        # switch to eval mode
-        model = torchvision.models.alexnet(weights='DEFAULT').eval()
+        if 'random' in model_name: 
+            model = torchvision.models.alexnet()
+        else:
+            # switch to eval mode
+            model = torchvision.models.alexnet(weights='DEFAULT')
 
         transform = ImageClassification(crop_size=224)
         
         # todo: find where this is
         state_dict = None
         
+        is_categ_supervised = True
+        
+        model_str = model_name
+        
     elif 'alexnet-barlow-twins' in model_name:
         
         if 'random' in model_name:
-            model, state_dict = barlow_twins.alexnet_gn_barlow_twins(pretrained=False)
+            model, state_dict = models.alexnet_gn_barlow_twins(pretrained=False)
         else:
-            model, state_dict = barlow_twins.alexnet_gn_barlow_twins(pretrained=True)
+            model, state_dict = models.alexnet_gn_barlow_twins(pretrained=True)
             
         transform = ImageClassification(resize_size=224, crop_size=224)
+        
+        is_categ_supervised = False
+        
+        model_str = model_name
         
     elif 'alexnet-vggface' in model_name:
         
@@ -42,12 +55,32 @@ def load_model(model_name):
         state_dict = checkpoint['state_dict']
     
         state_dict = {str.replace(k,'module.',''): v for k,v in state_dict.items()}
-        model = torchvision.models.alexnet(num_classes=3372).eval()
+        model = torchvision.models.alexnet(num_classes=3372)
         model.load_state_dict(state_dict)
         
         transform = ImageClassification(resize_size=224, crop_size=224)
         
-    return model, transform, state_dict
+        is_categ_supervised = True
+        
+        model_str = model_name
+        
+    elif 'dropout' in model_name:
+        
+        # todo: refactor
+        sweep = 'sweep1'
+        dropout_prop = float(model_name.split('dropout-')[-1])
+        learning_rate = 0.05
+        lr_peak = 0.15
+        
+        model, transform, state_dict, is_categ_supervised, model_str = load_alexnet_dropout_model(sweep, 
+                                                                                                  dropout_prop, 
+                                                                                                  learning_rate,
+                                                                                                  lr_peak)
+        
+    # ensure that all relus are converted to inplace=False
+    convert_relu(model.eval())
+        
+    return model, transform, state_dict, is_categ_supervised, model_str
 
 def load_alexnet_dropout_model(sweep, dropout_prop, learning_rate, lr_peak):
     
@@ -61,6 +94,7 @@ def load_alexnet_dropout_model(sweep, dropout_prop, learning_rate, lr_peak):
     
     if sweep == 'sweep1':
         model_str = f'alexnet_drop{int(100*dropout_prop):03}_ep100_lr{int(100*learning_rate):02}_peak{int(100*lr_peak):02}_ramp65-76'
+        is_categ_supervised = True
     else:
         raise NotImplementedError()
     
@@ -70,7 +104,7 @@ def load_alexnet_dropout_model(sweep, dropout_prop, learning_rate, lr_peak):
     assert(exists(weight_fn))
 
     model = models.AlexNet(dropout = dropout_prop).eval()
-
+    
     state_dict = torch.load(weight_fn)
     state_dict = {str.replace(k,'module.',''): v for k,v in state_dict.items()}
 
@@ -78,8 +112,32 @@ def load_alexnet_dropout_model(sweep, dropout_prop, learning_rate, lr_peak):
     
     transform = ImageClassification(crop_size=224)
     
-    return model, transform, state_dict, model_str
+    return model, transform, state_dict, is_categ_supervised, model_str
+
+def get_layer_names_and_dims(model):
     
+    x = torch.rand(1, 3, 224, 224)
+    
+    model_history = tl.get_model_activations(copy.deepcopy(model.eval()), x, which_layers='all')
+    
+    layer_list = model_history.layer_labels
+    
+    layer_list = np.array([lay for lay in layer_list if not 'buffer' in lay and not 'input' in lay])
+    
+    layer_dims = dict()
+    
+    for layer in layer_list:
+        layer_dims[layer] = model_history[layer].tensor_contents.detach().numpy().shape[1:]
+    
+    del model_history
+    gc.collect()
+    
+    return layer_list, layer_dims
+
+def shuffle_tensor(tensor):
+    return tensor.flatten()[torch.randperm(tensor.numel())].view(tensor.size())
+    
+#######################
     
 def get_NSD_train_test_activations(model_name, image_data):
     
@@ -203,6 +261,28 @@ def convert_relu(parent):
         elif len(list(child.children())) > 0:
             convert_relu(child)
             
+def get_modules(model):
+    
+    lay_modules = []
+    
+    layers = list(model.named_modules())
+    
+    count = 1
+    conv_count = 0
+
+    for i in range(1,len(layers)):
+        
+        module_type = layers[i][1].__class__.__name__
+
+        nonbasic_types = np.array(['Sequential','BasicBlock','Bottleneck','Fire',
+                                 '_DenseBlock', '_DenseLayer', 'Transition', '_Transition','InvertedResidual','_InvertedResidual','ConvBNReLU','CORblock_Z','CORblock_S','CORblock'])
+
+        if np.logical_not(np.isin(module_type, nonbasic_types)):
+
+            lay_modules.append(layers[i][1])
+
+    return lay_modules
+                        
             
 ### todo: refactor/eliminate need for this
 

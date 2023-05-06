@@ -15,6 +15,7 @@ from IPython.core.debugger import set_trace
 
 from jsputils import paths, statsmodels, nnutils, plotting
 
+
 parser = argparse.ArgumentParser(description='Identify DNN domain-selective units')
 
 parser.add_argument('--model-name', default='alexnet-supervised', 
@@ -45,6 +46,99 @@ def main():
     
     return
 
+def run_dnn_localizer_procedure(DNN, fLOC, FDR_p, overwrite, verbose): 
+    
+    print('getting DNN selective units...\n')
+    
+    all_selective_units = dict()
+    
+    activations_computed = False
+        
+    for target_domain in fLOC.floc_domains:
+    
+        savefn = f"{paths.selective_unit_dir()}/{DNN.model_name}_{fLOC.image_set_name}-{target_domain}_FDR-{str(FDR_p)[2:]}.npy"
+
+        print(savefn, '\n', target_domain)
+    
+        if exists(savefn) and overwrite is False:
+    
+            all_selective_units[target_domain] = np.load(savefn,allow_pickle=True).item()
+    
+        else:
+
+            target_domain_val = np.squeeze(np.argwhere(fLOC.floc_domains == target_domain))
+
+            ## visualize, for sanity
+            if verbose:
+
+                print(fLOC.floc_domains)
+                print(fLOC.floc_domains[target_domain_val], target_domain_val)
+                print('# localizer images in target domain:')
+                print(np.sum(fLOC.img_domain_indices == target_domain_val))
+                
+            if not activations_computed:
+                
+                print('computing floc set activations')
+
+                # data loader object is required for passing images through the network - choose batch size and num workers here
+                data_loader = torch.utils.data.DataLoader(
+                    dataset=fLOC.images,
+                    batch_size=len(fLOC.images),
+                    num_workers=32,
+                    shuffle=False,
+                    pin_memory=False
+                )
+
+                image_tensors, _ = next(iter(data_loader))
+
+                model_history = tl.get_model_activations(copy.deepcopy(DNN.model), image_tensors, which_layers='all')
+                
+                activations_computed = True
+                
+            else: 
+                
+                print('skipping activation computation - already stored in memory')
+
+            ################
+
+            selective_units = dict()
+
+            for layer in progress_bar(DNN.layer_names):
+
+                Y = model_history[layer].tensor_contents.detach().numpy()
+
+                if Y.ndim > 2:
+                    Y = Y.reshape(Y.shape[0],Y.shape[1]*Y.shape[2]*Y.shape[3])
+
+                if verbose:
+                    print(Y.shape)
+
+                selective_units[layer] = compute_selectivity(Y, 
+                                                             fLOC.img_domain_indices, 
+                                                             target_domain_val,
+                                                             FDR_p,
+                                                             verbose)
+
+            np.save(savefn, selective_units, allow_pickle=True)
+                
+            all_selective_units[target_domain] = selective_units
+            
+    all_selective_units['floc_imageset'] = fLOC.image_set_name
+    all_selective_units['floc_domains'] = fLOC.floc_domains
+    all_selective_units['model_name'] = DNN.model_name
+    all_selective_units['FDR_p'] = FDR_p
+
+    if activations_computed:
+        del model_history, Y, image_tensors, data_loader
+        gc.collect()
+
+    if verbose:
+        plotting.plot_selective_unit_props(all_selective_units)
+    
+    print('\n...done.')
+    
+    return all_selective_units
+    
 
 def get_model_selective_units(model_name, floc_imageset, input_model_and_transforms = None,
                               FDR_p = 0.05, overwrite = False, verbose = True):

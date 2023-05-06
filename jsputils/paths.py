@@ -31,7 +31,7 @@ def training_checkpoint_dir():
 def encoding_output_dir():
     return f'{base()}/DataLocal-w/NSD_encoding_models'    
 
-def imageset_dir():
+def image_set_dir():
     return f'{base()}/DropboxProjects/DROPOUT/PROJECT_DROPOUT/STIMULUS_SETS'
 
 def selective_unit_dir():
@@ -41,8 +41,12 @@ def figure_savedir():
     return f'{base()}/DropboxProjects/DROPOUT/PROJECT_DROPOUT/NOTEBOOKS/figure_outputs'
 
 def weight_savedir():
-    return f'{base()}/DropboxProjects/DROPOUT/PROJECT_DROPOUT/EXPERIMENTS_MODELS/weights'
+    return f'{base()}/DropboxProjects/DNFFA/PROJECT_DNFFA/EXPERIMENTS_MODELS/weights'
 
 def dnn_dropout_weightdir():
     return f'{base()}/DataExactitude-w/dnn-dropout'
+
+def brain_region_savedir():
+    return f'{base()}/DataLocal-w/NSD_processed_data'  
+    
     
