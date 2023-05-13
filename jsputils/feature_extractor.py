@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision import models
 from pdb import set_trace
+import gc
 
 class FeatureExtractor(nn.Module):
     '''
@@ -81,6 +82,48 @@ class FeatureExtractor(nn.Module):
         _ = self.model(x, *args, **kwargs)
         return self._features
     
+def get_pretty_layer_names(model):
+    fmt = []
+    c = 0
+    module_strs = get_module_names(model)
+    for module in module_strs:
+        if 'conv' in module.lower():
+            c+=1
+            fmt.append(f'conv{c}')
+        elif 'linear' in module.lower():
+            c+=1
+            fmt.append(f'fc{c}')
+        elif 'relu' in module.lower():
+            fmt.append(f'relu{c}')
+        elif 'maxpool' in module.lower():
+            fmt.append(f'maxpool{c}')
+        elif 'avgpool' in module.lower():
+            fmt.append(f'avgpool{c}')
+        elif 'groupnorm' in module.lower():
+            fmt.append(f'groupnorm{c}')
+        elif 'batchnorm' in module.lower():
+            fmt.append(f'batchnorm{c}')
+        elif 'flatten' in module.lower():
+            fmt.append(f'flatten')
+        elif 'dropout' in module.lower():
+            fmt.append(f'dropout')
+        else:
+            raise NotImplementedError(f'format for module {module} not implemented yet')
+    return fmt, get_layer_names(model)
+        
+def get_module_names(model):
+    return get_modules(model, parent_name='', module_info=[])
+
+def get_modules(model, parent_name='', module_info=[]):
+    for module_name, module in model.named_children():
+        layer_name = parent_name + '.' + module_name
+        if len(list(module.named_children())):
+            module_info = get_modules(module, layer_name, module_info=module_info)
+        else:
+            module_info.append(str(module).split('(')[0])
+            
+    return module_info
+
 def get_layers(model, parent_name='', layer_info=[]):
     for module_name, module in model.named_children():
         layer_name = parent_name + '.' + module_name
@@ -112,3 +155,19 @@ def get_layer_shapes(model, layer_names, x):
             features = extractor(x)
             shapes = {k:v.shape for k,v in features.items()}
     return shapes
+
+def get_features(model, images, layers_torch, layers_fmt, device):
+    model.eval()
+    with torch.no_grad():
+        with FeatureExtractor(model.to(device), layers_torch) as extractor:
+            features = extractor(images.to(device))
+            
+    out = dict()
+    for i, k in enumerate(features):
+        out[layers_fmt[i]] = features[k].detach().cpu().numpy()
+        
+    del images, extractor, features
+    torch.cuda.empty_cache()
+    gc.collect()
+    
+    return out

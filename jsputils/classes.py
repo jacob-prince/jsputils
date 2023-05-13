@@ -7,8 +7,9 @@ import PIL.Image as Image
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-from jsputils import paths, nsdorg, plotting, encoding, nnutils, selectivity, validation, lesioning
+from jsputils import paths, nsdorg, plotting, encoding, nnutils, selectivity, validation, lesioning, feature_extractor
 from fastprogress import progress_bar
+import gc
 from IPython.core.debugger import set_trace
 
 class ImageSet:
@@ -69,14 +70,58 @@ class DataLoaderFFCV:
                                                             self.device,
                                                             self.num_workers, 
                                                             self.batch_size)
+            
+class DataLoaderTorch:
+    def __init__(self, dataset, batch_size = 512, num_workers = 4, shuffle = False, pin_memory = False):
+        
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.shuffle = shuffle
+        self.pin_memory = pin_memory
+        
+        self.data_loader = torch.utils.data.DataLoader(
+            dataset=self.dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=self.shuffle,
+            pin_memory=self.pin_memory,
+        )
+
+        
 
 class DNNModel:
     def __init__(self, model_name):
                          
         self.model, self.transforms, self.state_dict, self.is_categ_supervised, self.model_name = nnutils.load_model(model_name)
+        
+        self.layer_names_fmt, self.layer_names_torch = feature_extractor.get_pretty_layer_names(self.model)
                  
-        self.layer_names, self.layer_dims = nnutils.get_layer_names_and_dims(self.model)
-        self.formatted_layer_names = None
+        # self.layer_names, self.layer_dims = nnutils.get_layer_names_and_dims(self.model)
+        # self.formatted_layer_names = None
+        
+    def get_floc_features(self, ImageSet, field = 'floc_features', device = 'cuda:0'):
+        
+        if not hasattr(self, field):
+            #for imgs in data_loader
+            data_loader = torch.utils.data.DataLoader(
+                        dataset=ImageSet.images,
+                        batch_size=len(ImageSet.images),
+                        num_workers=1,
+                        shuffle=False,
+                        pin_memory=False
+                    )
+
+            image_tensors, _ = next(iter(data_loader))
+
+            setattr(self, field, feature_extractor.get_features(copy.deepcopy(self.model), 
+                            image_tensors, self.layer_names_torch, self.layer_names_fmt, device = device))
+
+            del image_tensors, data_loader
+            torch.cuda.empty_cache()
+            gc.collect()
+        else:
+            print(f'skipping activation extraction: attribute {field} already exists in DNN.')
 
     def find_selective_units(self, localizer_image_set, FDR_p = 0.05, overwrite = False, verbose = False):
         
@@ -248,4 +293,4 @@ class BrainRegion(fMRISubject):
 
     def save(self):
         np.save(self.savefn, self, allow_pickle=True)
-
+           
