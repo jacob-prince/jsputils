@@ -35,7 +35,7 @@ def image_set_dir():
     return f'{base()}/DropboxProjects/DROPOUT/PROJECT_DROPOUT/STIMULUS_SETS'
 
 def selective_unit_dir():
-    return f'{base()}/DropboxProjects/DROPOUT/PROJECT_DROPOUT/EXPERIMENTS_MODELS/selective_units'
+    return f'{base()}/DropboxProjects/DNFFA/PROJECT_DNFFA/EXPERIMENTS_MODELS/selective_units'
 
 def figure_savedir():
     return f'{base()}/DropboxProjects/DROPOUT/PROJECT_DROPOUT/NOTEBOOKS/figure_outputs'
