@@ -7,7 +7,7 @@ import PIL.Image as Image
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-from jsputils import paths, nsdorg, plotting, encoding, nnutils, selectivity, validation, lesioning, feature_extractor
+from jsputils import paths, nsdorg, plotting, encoding, nnutils, selectivity, validation, lesioning, feature_extractor, readout
 from fastprogress import progress_bar
 import gc
 from IPython.core.debugger import set_trace
@@ -24,16 +24,16 @@ class ImageSet:
             self.floc_subdirs = np.array(['adult','body','car','child','corridor','house',
                                                        'instrument','limb','number','scrambled','word'])
             self.floc_domains = np.array(['faces','bodies','objects','scenes','characters','scrambled'])
-            self.domain_colors = np.array(['red','dodgerblue','orange','limegreen','blueviolet','lightgray'])
+            self.domain_colors = np.array(['tomato','dodgerblue','orange','limegreen','purple','darkgray'])
             self.subdir_domain_ref = np.array([0,1,2,0,3,3,2,1,4,5,4])
             
         elif image_set_name == 'classic-categ':
             self.categ_nimg = 80
             self.floc_subdirs = np.array(['1-Faces','2-Bodies','3-Scenes','4-Words',
                                           '5-Objects','6-ScrambledObjects','7-ScrambledWords'])
-            self.floc_domains = np.array(['faces','bodies','objects','scenes','characters','scrambled'])
-            self.domain_colors = np.array(['red','dodgerblue','orange','limegreen','blueviolet','lightgray'])
-            self.subdir_domain_ref = np.array([0,1,2,3,4,5,5])
+            self.floc_domains = np.array(['faces','bodies','scenes','characters','objects','scrambled-objects','scrambled-words'])
+            self.domain_colors = np.array(['tomato','dodgerblue','limegreen','purple','orange','darkgray'])
+            self.subdir_domain_ref = np.array([0,1,2,3,4,5,6])
             
         for subdir in os.listdir(self.image_folder):
             if os.path.isdir(subdir):
@@ -57,11 +57,12 @@ class ImageSet:
 #############
 
 class DataLoaderFFCV:
-    def __init__(self, partition, device = 'cuda:0', batch_size = 512, num_workers = 64):
+    def __init__(self, partition, device = 'cuda:0', batch_size = 512, num_workers = 64, resolution = 224):
         self.partition = partition
         self.device = device
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.resolution = resolution
            
         if self.partition == 'train':
             pass
@@ -69,24 +70,25 @@ class DataLoaderFFCV:
             self.data_loader = validation.create_val_loader(paths.ffcv_imagenet1k_valset(), 
                                                             self.device,
                                                             self.num_workers, 
-                                                            self.batch_size)
+                                                            self.batch_size,
+                                                            self.resolution)
             
-class DataLoaderTorch:
-    def __init__(self, dataset, batch_size = 512, num_workers = 4, shuffle = False, pin_memory = False):
+# class DataLoaderTorch:
+#     def __init__(self, dataset, batch_size = 512, num_workers = 4, shuffle = False, pin_memory = False):
         
-        self.dataset = dataset
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.shuffle = shuffle
-        self.pin_memory = pin_memory
+#         self.dataset = dataset
+#         self.batch_size = batch_size
+#         self.num_workers = num_workers
+#         self.shuffle = shuffle
+#         self.pin_memory = pin_memory
         
-        self.data_loader = torch.utils.data.DataLoader(
-            dataset=self.dataset,
-            batch_size=self.batch_size,
-            num_workers=self.num_workers,
-            shuffle=self.shuffle,
-            pin_memory=self.pin_memory,
-        )
+#         self.data_loader = torch.utils.data.DataLoader(
+#             dataset=self.dataset,
+#             batch_size=self.batch_size,
+#             num_workers=self.num_workers,
+#             shuffle=self.shuffle,
+#             pin_memory=self.pin_memory,
+#         )
 
         
 
@@ -102,26 +104,26 @@ class DNNModel:
         
     def get_floc_features(self, ImageSet, field = 'floc_features', device = 'cuda:0'):
         
-        if not hasattr(self, field):
-            #for imgs in data_loader
-            data_loader = torch.utils.data.DataLoader(
-                        dataset=ImageSet.images,
-                        batch_size=len(ImageSet.images),
-                        num_workers=1,
-                        shuffle=False,
-                        pin_memory=False
-                    )
+        #if not hasattr(self, field):
+        #for imgs in data_loader
+        data_loader = torch.utils.data.DataLoader(
+                    dataset=ImageSet.images,
+                    batch_size=len(ImageSet.images),
+                    num_workers=1,
+                    shuffle=False,
+                    pin_memory=False
+                )
 
-            image_tensors, _ = next(iter(data_loader))
+        image_tensors, _ = next(iter(data_loader))
 
-            setattr(self, field, feature_extractor.get_features(copy.deepcopy(self.model), 
-                            image_tensors, self.layer_names_torch, self.layer_names_fmt, device = device))
+        setattr(self, field, feature_extractor.get_features(copy.deepcopy(self.model), 
+                        image_tensors, self.layer_names_torch, self.layer_names_fmt, device = device))
 
-            del image_tensors, data_loader
-            torch.cuda.empty_cache()
-            gc.collect()
-        else:
-            print(f'skipping activation extraction: attribute {field} already exists in DNN.')
+        del image_tensors, data_loader
+        torch.cuda.empty_cache()
+        gc.collect()
+        #else:
+        #    print(f'skipping activation extraction: attribute {field} already exists in DNN.')
 
     def find_selective_units(self, localizer_image_set, FDR_p = 0.05, overwrite = False, verbose = False):
         
@@ -137,12 +139,19 @@ class DNNModel:
         self.imagenet_accs = validation.get_imagenet_class_accuracies(copy.deepcopy(self.model).half().to(ValLoader.device),
                                                                       ValLoader.data_loader,
                                                                       ValLoader.device, topk = topk)
+        
+        del ValLoader
+        gc.collect()
+        torch.cuda.empty_cache()
             
-            
-    def train_linear_probe(self):
+    # todo add more training args as inputs
+    def train_linear_probe(self, readout_from):
+        
+        self.readout_from = readout_from
+        
         # Train a linear ImageNet probe for self-supervised models
-        pass
-
+        readout.train_readout_layer(self, readout_from)
+        
     def assess_lesioning_impact(self):
         # Assess the impact of lesioning selective units on the model's ImageNet performance
         pass
@@ -172,6 +181,14 @@ class LesionModel(DNNModel):
                                                           self.device, 
                                                           p)
         
+    def apply_channelized_lesions(self, domain, method):
+        self.lsn_method = method
+        self.model.masks = lesioning.get_channelized_lesioning_masks(self,
+                                                                     self.layer_dims,
+                                                                     domain,
+                                                                     method,
+                                                                     self.device)
+        
     def remove_randomized_lesions(self):
         masks = dict()
         masks['apply'] = False
@@ -188,6 +205,9 @@ class LesionModel(DNNModel):
     def get_selective_unit_acts(self):
         
         assert(hasattr(self, 'selective_units'))
+        
+        if self.model.return_acts is False:
+            self.model.return_acts = True
             
         ValLoader = DataLoaderFFCV('val')
         
@@ -198,6 +218,9 @@ class LesionModel(DNNModel):
                                                                       list(self.selective_units['faces'].keys()),
                                                                       ValLoader.data_loader,
                                                                       ValLoader.device)
+        del ValLoader
+        gc.collect()
+        torch.cuda.empty_cache()
 
 class fMRISubject:
     def __init__(self, subj, space, beta_version):

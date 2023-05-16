@@ -3,7 +3,7 @@ import copy
 import gc
 import torch
 from torch import nn
-from jsputils import nnutils
+from jsputils import nnutils, feature_extractor
 from IPython.core.debugger import set_trace
 
 def lesion(x,mask,apply):
@@ -23,11 +23,14 @@ def lesion(x,mask,apply):
 def transfer_modules(from_model, to_model):
     
     # todo: refactor
-    _, _, layers_fmt, modules = nnutils.get_layer_names(from_model)
+    _, _, _, modules = nnutils.get_layer_names(from_model)
+    
+    layer_names, _ = feature_extractor.get_pretty_layer_names(from_model)
     
     for i in range(len(modules)):
         #print(layers_fmt[i].split('_')[1],modules[i])
-        setattr(to_model,layers_fmt[i].split('_')[1],modules[i])
+        #setattr(to_model,layers_fmt[i].split('_')[1],modules[i])
+        setattr(to_model, layer_names[i], modules[i])
 
     return to_model
 
@@ -38,7 +41,7 @@ def get_layer_dims(model, device):
     tmp_model.return_acts = True
     tmp_model.target_layers = tmp_model.layer_names
 
-    tmp_img = torch.ones(1,3,256,256).to(device)
+    tmp_img = torch.ones(1,3,224,224).to(device)
     _, tmp_acts = tmp_model(tmp_img)
 
     lay_dims = dict()
@@ -51,6 +54,31 @@ def get_layer_dims(model, device):
     gc.collect()
     
     return lay_dims
+
+def get_channelized_lesioning_masks(LSN, lay_dims, domain, method, device):
+    
+    lsn_masks = dict()
+    
+    for layer in LSN.model.layer_names:
+        dims = lay_dims[layer]
+        
+        if method == 'relus':
+            condition = 'relu' in layer
+        elif method == 'full':
+            condition = layer != LSN.model.layer_names[-1]
+            
+        if condition:
+            mask = torch.from_numpy(LSN.selective_units[domain][layer]['mask'])
+            mask = torch.logical_not(mask).float().view(dims)
+
+        else:
+            mask = torch.ones(lay_dims[layer])
+            
+        lsn_masks[layer] = mask.to(device)
+        #print(layer, lsn_masks[layer].float().mean())
+        
+    return lsn_masks
+            
 
 def layer_random_lesioning_mask(layer, lay_dims, p = 0.5):
     dims = lay_dims[layer]

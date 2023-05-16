@@ -84,14 +84,18 @@ class FeatureExtractor(nn.Module):
     
 def get_pretty_layer_names(model):
     fmt = []
-    c = 0
+    c = 1
     module_strs = get_module_names(model)
-    for module in module_strs:
+    for m, module in enumerate(module_strs):
         if 'conv' in module.lower():
-            c+=1
+            if m > 0:
+                if 'dropout' not in module_strs[m-1].lower():
+                    c+=1
             fmt.append(f'conv{c}')
         elif 'linear' in module.lower():
-            c+=1
+            if m > 0:
+                if 'dropout' not in module_strs[m-1].lower():
+                    c+=1
             fmt.append(f'fc{c}')
         elif 'relu' in module.lower():
             fmt.append(f'relu{c}')
@@ -106,7 +110,10 @@ def get_pretty_layer_names(model):
         elif 'flatten' in module.lower():
             fmt.append(f'flatten')
         elif 'dropout' in module.lower():
-            fmt.append(f'dropout')
+            c+=1 
+            fmt.append(f'dropout{c}')
+        elif 'normalize' in module.lower():
+            fmt.append(f'norm{c}')
         else:
             raise NotImplementedError(f'format for module {module} not implemented yet')
     return fmt, get_layer_names(model)

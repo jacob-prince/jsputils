@@ -41,7 +41,9 @@ def plot_selective_unit_props(selective_unit_dict):
               'objects':'orange',
               'scenes':'limegreen',
               'characters':'purple',
-              'scrambled':'navy'}
+              'scrambled':'navy',
+             'scrambled-objects':'navy',
+             'scrambled-words':'darkgray'}
 
     floc_colors = [x[1] for x in colors]
     floc_domains = [x[0] for x in colors]

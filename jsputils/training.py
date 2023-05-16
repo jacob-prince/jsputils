@@ -13,20 +13,21 @@ from fastprogress.fastprogress import progress_bar
 
 from jsputils import paths, losses
 
-import ffcv.fields.decoders as Decoders
-from ffcv.reader import Reader
-from ffcv.fields import IntField, RGBImageField
 from ffcv.pipeline.operation import Operation
 from ffcv.loader import Loader, OrderOption
 from ffcv.transforms import ToTensor, ToDevice, Squeeze, NormalizeImage, \
-    RandomHorizontalFlip, ToTorchImage, RandomResizedCrop
+    RandomHorizontalFlip, ToTorchImage
 from ffcv.fields.rgb_image import CenterCropRGBImageDecoder, \
-    RandomResizedCropRGBImageDecoder, SimpleRGBImageDecoder
+    RandomResizedCropRGBImageDecoder
 from ffcv.fields.basics import IntDecoder
 from ffcv.fields import IntField, RGBImageField
-from typing import List, Tuple
+from ffcv.fields import decoders as Decoders
 
 import torch
+
+IMAGENET_MEAN = np.array([0.485, 0.456, 0.406]) * 255
+IMAGENET_STD = np.array([0.229, 0.224, 0.225]) * 255
+DEFAULT_CROP_RATIO = 224/256
 
 def arg_helper():
     
@@ -61,19 +62,19 @@ def arg_helper():
     parser.add_argument('--sparse-pos', default=True, 
                         type=bool, metavar='W', help='enable sparse positive clf?')
 
-    parser.add_argument('--l1-pos-lambda', default=0.0005, 
+    parser.add_argument('--l1-pos-lambda', default=1e-05, 
                         type=float, metavar='L', help='if sparse-pos is enabled, l1 lambda applied to positive weights')
 
-    parser.add_argument('--l1-neg-lambda', default=0.001, 
+    parser.add_argument('--l1-neg-lambda', default=0.0001, 
                         type=float, metavar='L', help='if sparse-pos is enabled, l1 lambda applied to negative weights')
 
     args = parser.parse_args("")
     
     return args
 
-def main_training_loop(model, train_loader, val_loader, args):
+def main_training_loop(DNN, train_loader, val_loader, args):
     
-    description = f'mdl-{model.model_str}_from-{args.readout_from}_mlr-{args.max_lr}_ilr-{args.initial_lr}_eps-{args.train_epochs}_sparse-pos-{args.sparse_pos}'
+    description = f'mdl-{DNN.model_name}_from-{args.readout_from}_mlr-{args.max_lr}_ilr-{args.initial_lr}_eps-{args.train_epochs}_sparse-pos-{args.sparse_pos}'
     
     if args.sparse_pos is True:
         description = f'{description}_l1p-{args.l1_pos_lambda}_l1n-{args.l1_neg_lambda}'
@@ -94,7 +95,7 @@ def main_training_loop(model, train_loader, val_loader, args):
     
     criterion = losses.get_loss_fn(args)
     
-    optimizer = torch.optim.SGD(model.parameters(), 
+    optimizer = torch.optim.SGD(DNN.readout_model.parameters(), 
                                 lr=args.max_lr, 
                                 momentum=0.9)
 
@@ -117,7 +118,7 @@ def main_training_loop(model, train_loader, val_loader, args):
                           map_location=args.device)
         start_epoch = ckpt['epoch']
         best_acc = ckpt['best_acc']
-        model.load_state_dict(ckpt['model'])
+        DNN.readout_model.load_state_dict(ckpt['model'])
         optimizer.load_state_dict(ckpt['optimizer'])
         scheduler.load_state_dict(ckpt['scheduler'])
     else:
@@ -126,7 +127,7 @@ def main_training_loop(model, train_loader, val_loader, args):
         
     ##################
     
-    model.to(args.device)
+    DNN.readout_model.to(args.device)
     
     print('training readout...')
 
@@ -135,14 +136,14 @@ def main_training_loop(model, train_loader, val_loader, args):
     step = 0
     for epoch in progress_bar(range(start_epoch, args.train_epochs)):
 
-        model.eval()
+        DNN.readout_model.eval()
         
         for step, (images, target, _, _) in enumerate(progress_bar(train_loader), start=epoch * len(train_loader)):
 
-            output = model(images.to(args.device, non_blocking=True))
+            output = DNN.readout_model(images.to(args.device, non_blocking=True))
             
             if args.sparse_pos is True:
-                readout_weights = model.readout.weight
+                readout_weights = DNN.readout_model.readout.weight
                 
                 loss, clf_loss, l1_pos_loss, l1_neg_loss = criterion.compute_loss(readout_weights, 
                                                                              output, 
@@ -183,7 +184,7 @@ def main_training_loop(model, train_loader, val_loader, args):
                 print(json.dumps(stats), file=stats_file)
                 
                 wandb.log(stats)
-                wandb.watch(model)
+                wandb.watch(DNN.readout_model)
                 step += 1
 
         print(f'evaluating for epoch {epoch}...')
@@ -193,7 +194,7 @@ def main_training_loop(model, train_loader, val_loader, args):
         top5 = AverageMeter('Acc@5')
         with torch.no_grad():
             for images, target, _, _ in progress_bar(val_loader):
-                output = model(images.to(args.device, non_blocking=True))
+                output = DNN.readout_model(images.to(args.device, non_blocking=True))
                 acc1, acc5 = accuracy(output, target.to(args.device, non_blocking=True), topk=(1, 5))
                 top1.update(acc1[0].item(), images.size(0))
                 top5.update(acc5[0].item(), images.size(0))
@@ -205,14 +206,52 @@ def main_training_loop(model, train_loader, val_loader, args):
         print(json.dumps(stats), file=stats_file)
 
         state = dict(
-            epoch=epoch + 1, best_acc=best_acc, model=model.state_dict(),
+            epoch=epoch + 1, best_acc=best_acc, model=DNN.readout_model.state_dict(),
             optimizer=optimizer.state_dict(), scheduler=scheduler.state_dict())
         torch.save(state, f'{checkpoint_dir}/checkpoint.pth')
 
     stats_file.close()
         
-    return model
+    return DNN
 
+# def create_train_loader(train_dataset, device = 'cuda:0', num_workers = 64, batch_size = 512, resolution = 256, batches_ahead = 3, distributed = 0):
+    
+#         train_path = Path(train_dataset)
+#         assert train_path.is_file()
+#         res_tuple = (resolution, resolution)
+#         cropper = CenterCropRGBImageDecoder(res_tuple, ratio=DEFAULT_CROP_RATIO)
+#         image_pipeline = [
+#             cropper,
+#             ToTensor(),
+#             ToDevice(torch.device(device), non_blocking=True),
+#             ToTorchImage(),
+#             NormalizeImage(IMAGENET_MEAN, IMAGENET_STD, np.float16)
+#         ]
+
+#         label_pipeline = [
+#             IntDecoder(),
+#             ToTensor(),
+#             Squeeze(),
+#             ToDevice(torch.device(device),
+#             non_blocking=True)
+#         ]
+        
+#         loader = Loader(train_dataset,
+#                         batch_size=batch_size,
+#                         batches_ahead=batches_ahead,
+#                         num_workers=num_workers,
+#                         order=OrderOption.RANDOM,
+#                         drop_last=False,
+#                         pipelines={
+#                             'image': image_pipeline,
+#                             'label': label_pipeline
+#                         },
+#                         custom_fields={
+#                             'image': RGBImageField,
+#                             'label': IntField,
+#                         },
+#                         distributed=distributed)
+#         return loader
 
 def get_ffcv_dataloaders(args):
 
@@ -246,7 +285,7 @@ def get_ffcv_dataloaders(args):
         train_decoder,
         RandomHorizontalFlip(),
         ToTensor(),
-        ToDevice(device, non_blocking=True),
+        ToDevice(torch.device(device), non_blocking=True),
         ToTorchImage(),
         NormalizeImage(IMAGENET_MEAN, IMAGENET_STD, precision)
     ]
@@ -254,7 +293,7 @@ def get_ffcv_dataloaders(args):
     val_image_pipeline: List[Operation] = [
         val_decoder,
         ToTensor(),
-        ToDevice(device, non_blocking=True),
+        ToDevice(torch.device(device), non_blocking=True),
         ToTorchImage(),
         NormalizeImage(IMAGENET_MEAN, IMAGENET_STD, precision)
     ]
@@ -263,7 +302,7 @@ def get_ffcv_dataloaders(args):
         IntDecoder(),
         ToTensor(),
         Squeeze(),
-        ToDevice(device, non_blocking=True)
+        ToDevice(torch.device(device), non_blocking=True)
     ]    
 
     # make dataloaders

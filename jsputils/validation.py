@@ -27,6 +27,7 @@ from typing import List
 from pathlib import Path
 from argparse import ArgumentParser
 
+# unclear if these are needed?
 from fastargs import get_current_config
 from fastargs.decorators import param
 from fastargs import Param, Section
@@ -51,7 +52,7 @@ DEFAULT_CROP_RATIO = 224/256
 
 num_classes = 1000
 lr_tta = 1
-resolution = 256
+resolution = 224
 
 def get_imagenet_class_accuracies(model, val_dataloader, device, topk = 5):
     
@@ -95,9 +96,9 @@ def get_imagenet_class_accuracies(model, val_dataloader, device, topk = 5):
             all_c_accs[c] = np.mean(all_pred_labels[idx] == c)
             
     del imgs, out, preds, target
-    ch.cuda.empty_cache()
     gc.collect()
-                    
+    ch.cuda.empty_cache()
+               
     return all_c_accs #, all_pred_labels, all_true_labels
 
 
@@ -127,17 +128,22 @@ def get_selective_unit_acts(model, selective_units, layer_names, val_dataloader,
                     for domain in floc_domains:
 
                         ac = acts[layer].detach().clone()
+                        
+                        ac = ch.reshape(ac, (ac.shape[0], -1))
                         this_mask = selective_units[domain][layer]['mask']
-                        ac_masked = ac[:,this_mask == 0]
-                        mean_act = torch.mean(ac_masked, axis=1)
+                        try:
+                            ac_masked = ac[:,this_mask]
+                        except:
+                            set_trace()
+                        mean_act = ch.mean(ac_masked, axis=1)
 
                         domain_mean_acts[domain][layer].append(mean_act)
             
-        count += imgs.shape[0]
+                count += imgs.shape[0]
         
-        all_labels.append(labels.detach().clone())
+                all_labels.append(target.detach().clone())
         
-    all_labels = torch.cat(all_labels).cpu().numpy()
+    all_labels = ch.cat(all_labels).cpu().numpy()
     
     all_layer_mean_acts = dict()
     
@@ -148,7 +154,7 @@ def get_selective_unit_acts(model, selective_units, layer_names, val_dataloader,
         for lay in model.layer_names:
             c_acts = np.zeros((1000,))
             
-            all_mean_acts = torch.cat(domain_mean_acts[domain][lay]).cpu().numpy()
+            all_mean_acts = ch.cat(domain_mean_acts[domain][lay]).cpu().numpy()
 
             for c in range(1000):
                 idx = np.argwhere(all_labels == c)
@@ -159,13 +165,12 @@ def get_selective_unit_acts(model, selective_units, layer_names, val_dataloader,
     end = time.time()
     dur = end - start
     print(f"==> dur={dur}s")
-
-    return all_layer_mean_acts#, all_labels
-            
     
+    del imgs, target, out, acts, ac, ac_masked, mean_act, domain_mean_acts, all_labels
+    gc.collect()
+    ch.cuda.empty_cache()
 
-
-
+    return all_layer_mean_acts
 
 def validate_trained_model(model_dir, dropout_prop, learning_rate, lr_peak,
                            device):
@@ -222,10 +227,9 @@ def validate_trained_model(model_dir, dropout_prop, learning_rate, lr_peak,
     gc.collect()
     
     return stats, model_str
-
      
-def create_val_loader(val_dataset, device = 'cuda:0', num_workers = 64, batch_size = 512, 
-                          batches_ahead = 3, resolution = 256, distributed = 0):
+def create_val_loader(val_dataset, device = 'cuda:0', num_workers = 64, batch_size = 512, resolution = 256,
+                          batches_ahead = 3, distributed = 0):
     
         val_path = Path(val_dataset)
         assert val_path.is_file()

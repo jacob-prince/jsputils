@@ -6,28 +6,28 @@ import wandb
 
 N_IMAGENET_CLASSES = 1000
 
-def train_readout_layer(model, readout_from):
+def train_readout_layer(DNN, readout_from):
     
     # deal with args
-    args = train.arg_helper()
+    args = training.arg_helper()
     args.readout_from = readout_from
     args.wandb_repo = 'DNFFA'
     
     # determine which readout layer is being used and modify model accordingly
-    readout_model = append_readout_layer(model, readout_from)
+    DNN = append_readout_layer(DNN, readout_from)
     
     # prepare ffcv dataloaders
-    train_loader, val_loader = train.get_ffcv_dataloaders(args)
+    train_loader, val_loader = training.get_ffcv_dataloaders(args)
     
     # main training loop
-    readout_model = train.main_training_loop(readout_model, train_loader, val_loader, args)
+    DNN = training.main_training_loop(DNN, train_loader, val_loader, args)
     
-    return readout_model
+    return DNN
 
-def append_readout_layer(model, readout_from): 
+def append_readout_layer(DNN, readout_from): 
     
     # handle models on a case-by-case basis
-    if model.arch == 'alexnet' and model.task == 'barlow-twins':
+    if 'alexnet-barlow-twins' in DNN.model_name:
         
         if readout_from == 'fc6':
             in_features = 4096
@@ -43,7 +43,7 @@ def append_readout_layer(model, readout_from):
             projector_idx = 5
     
         # create a copy of the model to avoid modifying the original
-        readout_model = copy.deepcopy(model)
+        readout_model = copy.deepcopy(DNN.model)
         
         # linear readout
         readout_model.readout = nn.Linear(in_features=in_features, 
@@ -65,7 +65,7 @@ def append_readout_layer(model, readout_from):
         # set the new forward function
         setattr(readout_model, 'forward', bound_method)
         
-        #print(readout_model)
+        print(readout_model)
         
     # only the readout layer needs gradients
     for p, param in enumerate(readout_model.parameters()):
@@ -73,11 +73,12 @@ def append_readout_layer(model, readout_from):
             param.requires_grad = True
         else:
             param.requires_grad = False   
-            
-    return readout_model
+    
+    DNN.readout_model = readout_model
+    
+    return DNN
 
 def alexnet_readout_forward_projector(self, x):
     z = self.readout(self.projector(self.flatten(self.backbone(x))))
     return z
-    
     

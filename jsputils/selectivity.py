@@ -48,20 +48,24 @@ def main():
 
 def run_dnn_localizer_procedure(DNN, fLOC, FDR_p, overwrite, verbose): 
     
-    print('getting DNN selective units...\n')
+    if verbose:
+        print('getting DNN selective units...\n')
     
     all_selective_units = dict()
     
-    if not hasattr(DNN, 'floc_features'):
-        activations_computed = False
-    else:
-        activations_computed = True
+    activations_computed = False
+    
+    #if not hasattr(DNN, 'floc_features'):
+    #    activations_computed = False
+    #else:
+    #    activations_computed = True
         
     for target_domain in fLOC.floc_domains:
     
         savefn = f"{paths.selective_unit_dir()}/{DNN.model_name}_{fLOC.image_set_name}-{target_domain}_FDR-{str(FDR_p)[2:]}.npy"
 
-        print(savefn, '\n', target_domain)
+        if verbose:
+            print(savefn, '\n', target_domain)
     
         if exists(savefn) and overwrite is False:
     
@@ -123,7 +127,7 @@ def run_dnn_localizer_procedure(DNN, fLOC, FDR_p, overwrite, verbose):
     if verbose:
         plotting.plot_selective_unit_props(all_selective_units)
     
-    print('\n...done.')
+        print('\n...done.')
     
     return all_selective_units
     

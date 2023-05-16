@@ -43,10 +43,26 @@ def load_model(model_name):
         else:
             model, state_dict = models.alexnet_gn_barlow_twins(pretrained=True)
             
-        transform = ImageClassification(resize_size=224, crop_size=224)
+        #transform = ImageClassification(resize_size=256, crop_size=224)
+        
+        transform = transforms.Compose([
+                transforms.Resize(224),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225]),
+            ])
         
         is_categ_supervised = False
         
+        model_str = model_name
+        
+    elif 'alexnet-ipcl' in model_name:
+        
+        model, transform = torch.hub.load("harvard-visionlab/open_ipcl", "alexnetgn_ipcl_ref01")
+        
+        state_dict = None
+        is_categ_supervised = False
         model_str = model_name
         
     elif 'alexnet-vggface' in model_name:
@@ -338,11 +354,13 @@ def get_layer_names(model):
                 fmt = 'conv_skip'
             else:
                 fmt = 'conv'
-        elif 'Norm' in lay_type:
+        elif 'batchnorm' in lay_type.lower():
             if 'skip' in lay_names_torch[c]:
                 fmt = 'norm_skip'
             else:
-                fmt = 'norm'
+                fmt = 'batchnorm'
+        elif 'groupnorm' in lay_type.lower():
+            fmt = 'groupnorm'
         elif 'ReLU' in lay_type:
             fmt = 'relu'
         elif 'MaxPool' in lay_type:
@@ -352,7 +370,7 @@ def get_layer_names(model):
         elif 'Linear' in lay_type:
             fmt = 'fc'
         elif 'Dropout' in lay_type:
-            fmt = 'drop'
+            fmt = 'dropout'
         elif 'Identity' in lay_type:
             fmt = 'identity'
         elif 'Flatten' in lay_type:
