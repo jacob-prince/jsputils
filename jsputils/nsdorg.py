@@ -325,6 +325,7 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
     
     voxel_group_info = {'nativesurface': 
                             {'nsdgeneral': ('nsdgeneral',        1),
+                             'V1v':        ('prf-visualrois.label',    'V1v'),
                              'FFA-1':      ('floc-faces.label',  'FFA-1'),
                              'FFA-2':      ('floc-faces.label',  'FFA-2'),
                              'OFA':        ('floc-faces.label',  'OFA'),
@@ -339,6 +340,7 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
                              'OTC':        (None, None)},
                        'func1pt8mm':
                             {'nsdgeneral': ('nsdgeneral',        1),
+                             'V1v':        ('prf-visualrois.label',    'V1v'),
                              'FFA-1':      ('floc-faces.label',  'FFA-1'),
                              'FFA-2':      ('floc-faces.label',  'FFA-2'),
                              'OFA':        ('floc-faces.label',  'OFA'),
@@ -405,7 +407,7 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
     if plot:
         
         volume = plotting.plot_ROI_flatmap(subj,space,
-                                            f'# total voxels for {subj}, {voxel_group}: {np.sum(plot_data)}',plot_data,
+                                            f'# total voxels for {subj}, {voxel_group}: {np.sum(plot_data > 0)}',plot_data,
                                            vmin=0,#np.nanmin(plot_data),
                                            vmax=1)#np.nanmax(plot_data))
         
@@ -622,7 +624,7 @@ def get_NSD_train_test_images(subj, train_imageset, test_imageset):
   
     return image_data
 
-def get_NSD_train_test_images_and_betas(subj, space, subj_betas, rep_cocos, train_imageset, test_imageset, mean = True):
+def get_NSD_encoding_images_and_betas(subj, space, subj_betas, rep_cocos, train_imageset, val_imageset, test_imageset, mean = True):
     
     if space == 'nativesurface':
         hemis = ['lh','rh']
@@ -638,18 +640,16 @@ def get_NSD_train_test_images_and_betas(subj, space, subj_betas, rep_cocos, trai
     coco_dict = get_coco_dict(subjs, annotations)
 
     encoding_cocos = dict()
-    try:
-        encoding_cocos['train'] = coco_dict[subj][train_imageset]
-    except:
-        encoding_cocos['train'] = coco_dict[train_imageset]
-    try:
-        encoding_cocos['test'] = coco_dict[subj][test_imageset]
-    except:
-        encoding_cocos['test'] = coco_dict[test_imageset]
+    partitions = ['train','val','test']
+    for p, images in enumerate([train_imageset, val_imageset, test_imageset]):
+        try:
+            encoding_cocos[partitions[p]] = coco_dict[subj][images]
+        except:
+            encoding_cocos[partitions[p]] = coco_dict[images]
 
     nc = dict()
-    nc['train'] = len(encoding_cocos['train'])
-    nc['test'] = len(encoding_cocos['test'])
+    for partition in partitions:
+        nc[partition] = len(encoding_cocos[partition])
     
     # access nsd stimuli
     stim_f = h5py.File(f'{paths.nsd_stimuli()}/nsd_stimuli.hdf5', 'r')
@@ -658,7 +658,7 @@ def get_NSD_train_test_images_and_betas(subj, space, subj_betas, rep_cocos, trai
     image_data = dict()
     brain_data = dict()
 
-    for partition in ['train','test']:
+    for partition in partitions:
 
         image_data[partition] = np.empty((nc[partition], dim[1], dim[2], dim[3]), dtype=np.uint8)
         brain_data[partition] = dict()
@@ -684,6 +684,5 @@ def get_NSD_train_test_images_and_betas(subj, space, subj_betas, rep_cocos, trai
             if mean:
                 # need nanmean in case subject is missing data
                 brain_data[partition][hemi] = np.nanmean(brain_data[partition][hemi], axis = 1)
-            print(partition, hemi, image_data[partition].shape, brain_data[partition][hemi].shape)
             
     return image_data, brain_data

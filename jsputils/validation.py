@@ -151,7 +151,7 @@ def get_selective_unit_acts(model, selective_units, layer_names, val_dataloader,
 
         all_layer_mean_acts[domain] = dict()
 
-        for lay in model.layer_names:
+        for lay in layer_names:
             c_acts = np.zeros((1000,))
             
             all_mean_acts = ch.cat(domain_mean_acts[domain][lay]).cpu().numpy()
@@ -229,19 +229,28 @@ def validate_trained_model(model_dir, dropout_prop, learning_rate, lr_peak,
     return stats, model_str
      
 def create_val_loader(val_dataset, device = 'cuda:0', num_workers = 64, batch_size = 512, resolution = 256,
-                          batches_ahead = 3, distributed = 0):
+                          batches_ahead = 3, distributed = 0, normalize = True):
     
         val_path = Path(val_dataset)
         assert val_path.is_file()
         res_tuple = (resolution, resolution)
         cropper = CenterCropRGBImageDecoder(res_tuple, ratio=DEFAULT_CROP_RATIO)
-        image_pipeline = [
-            cropper,
-            ToTensor(),
-            ToDevice(ch.device(device), non_blocking=True),
-            ToTorchImage(),
-            NormalizeImage(IMAGENET_MEAN, IMAGENET_STD, np.float16)
-        ]
+        
+        if normalize:
+            image_pipeline = [
+                cropper,
+                ToTensor(),
+                ToDevice(ch.device(device), non_blocking=True),
+                ToTorchImage(),
+                NormalizeImage(IMAGENET_MEAN, IMAGENET_STD, np.float16)
+            ]
+        else:
+            image_pipeline = [
+                cropper,
+                ToTensor(),
+                ToDevice(ch.device(device), non_blocking=True),
+                ToTorchImage()
+            ]
 
         label_pipeline = [
             IntDecoder(),

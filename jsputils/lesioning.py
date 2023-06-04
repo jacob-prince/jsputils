@@ -144,9 +144,12 @@ class LesionNet(nn.Module):
             try:
                 x = operation(x)
             except:
-                print(operation)
-                print(x.shape)
-                set_trace()
+                try:
+                    x = operation(x.half())
+                except:
+                    print(operation)
+                    print(x.shape)
+                    set_trace()
 
             # get the mask for that layer, and tile along the image dimension
             if self.masks['apply'] == True:

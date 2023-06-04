@@ -26,13 +26,13 @@ def ffcv_imagenet1k_valset():
     return f'{base()}/DataLocal-ro/imagenet1k-ffcv/imagenet1k_val_jpg_q100_s256_lmax512_crop_includes_index.ffcv'
 
 def training_checkpoint_dir():
-    return f'{base()}/DropboxProjects/DROPOUT/PROJECT_DROPOUT/EXPERIMENTS_MODELS/checkpoints'
+    return f'{base()}/DropboxProjects/DNFFA/PROJECT_DNFFA/EXPERIMENTS_MODELS/checkpoints'
 
 def encoding_output_dir():
     return f'{base()}/DataLocal-w/NSD_encoding_models'    
 
 def image_set_dir():
-    return f'{base()}/DropboxProjects/DROPOUT/PROJECT_DROPOUT/STIMULUS_SETS'
+    return f'{base()}/DropboxProjects/DNFFA/PROJECT_DNFFA/STIMULUS_SETS'
 
 def selective_unit_dir():
     return f'{base()}/DropboxProjects/DNFFA/PROJECT_DNFFA/EXPERIMENTS_MODELS/selective_units'
