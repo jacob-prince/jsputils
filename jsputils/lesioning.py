@@ -57,7 +57,11 @@ def get_layer_dims(model, device):
 
 def get_channelized_lesioning_masks(LSN, lay_dims, domain, method, device):
     
+    print(f'applying channelized lesions for domain: {domain}')
+    
     lsn_masks = dict()
+    lsn_props = []
+    lsn_counts = []
     
     for layer in LSN.model.layer_names:
         dims = lay_dims[layer]
@@ -70,12 +74,21 @@ def get_channelized_lesioning_masks(LSN, lay_dims, domain, method, device):
         if condition:
             mask = torch.from_numpy(LSN.selective_units[domain][layer]['mask'])
             mask = torch.logical_not(mask).float().view(dims)
+            prop = mask.eq(0).float().mean()
+            count = mask.eq(0).float().sum()
+            print(f'\t\tproportion units lesioned in layer {layer}: {round(prop.item(),3)}')
+            lsn_props.append(prop.item())
+            lsn_counts.append(count.item())
 
         else:
             mask = torch.ones(lay_dims[layer])
             
         lsn_masks[layer] = mask.to(device)
         #print(layer, lsn_masks[layer].float().mean())
+        
+    print(f'\tsummary:\n\t\tdomain: {domain}\n\t\tmethod: {method}\n\t\tprops: {lsn_props}\n\t\tcounts: {lsn_counts}')
+    print(f'\tmean prop for domain {domain}: {round(np.nanmean(lsn_props),3)}')
+    print('\n\n')
         
     return lsn_masks
             

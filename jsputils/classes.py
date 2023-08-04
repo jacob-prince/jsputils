@@ -2,6 +2,7 @@ import torch
 from os.path import exists
 from torch import nn
 from torch.utils.data import Dataset
+from torch.cuda.amp import autocast
 import torchvision
 import copy
 import PIL.Image as Image
@@ -63,6 +64,24 @@ class ImageSet:
             self.categ_nimg = 156
             self.floc_subdirs = np.array(['images'])
             self.subdir_domain_ref = np.array([0])
+            
+            
+        elif 'mc8' in image_set_name:
+            self.categ_nimg = 30
+            self.floc_subdirs = np.array(['1-faces','2-bodies',
+                                          '3-cats','4-buildings',
+                                          '5-cars','6-chairs',
+                                          '7-hammers','8-phones'])
+            self.subdir_domain_ref = np.arange(8)
+            self.floc_domains = np.array(['faces','bodies','cats','buildings','cars','chairs','hammers','phones'])
+            self.domain_colors = np.array([[0.988235294117647, 0.172549019607843, 0.345098039215686],
+        [0.988235294117647, 0.305882352941177, 0.670588235294118],
+        [0.658823529411765, 0.262745098039216, 0.984313725490196],
+        [0.219607843137255, 0.188235294117647, 0.980392156862745],
+        [0.992156862745098, 0.576470588235294, 0.149019607843137],
+        [0.184313725490196, 0.901960784313726, 1],
+        [0.423529411764706, 0.666666666666667, 0.988235294117647],
+        [0.996078431372549, 0.909803921568627, 0.227450980392157]])
             
         for subdir in os.listdir(self.image_folder):
             if os.path.isdir(subdir):
@@ -159,12 +178,16 @@ class DNNModel:
             torchvision.transforms.Lambda(lambda x: Image.fromarray(x.numpy()))
         ] 
 
-        # Add the original transforms to the list
-        transforms_list.extend(self.transforms.transforms)
-
-        # Create a new Compose object with the updated list
-        transforms_list = torchvision.transforms.Compose(transforms_list)
-        
+        if self.model_name == 'alexnet-vggface':
+            # Create a new Compose object with the updated list
+            transforms_list = torchvision.transforms.Compose([transforms_list[0],
+                                                              self.transforms])
+        else:
+            # Add the original transforms to the list
+            transforms_list.extend(self.transforms.transforms)
+            # Create a new Compose object with the updated list
+            transforms_list = torchvision.transforms.Compose(transforms_list)
+            
         nsd_dataset = NSDImageSet(image_matrix, transforms = transforms_list)
         
         data_loader = torch.utils.data.DataLoader(
@@ -191,13 +214,13 @@ class DNNModel:
         
         self.selective_units = selectivity.run_dnn_localizer_procedure(self, floc_imageset, FDR_p, overwrite, verbose)
         
-    def get_imagenet_accs(self, topk = 5): 
+    def get_imagenet_accs(self, topk = 5, cv = False): 
         
         ValLoader = DataLoaderFFCV('val')
         
         self.imagenet_accs = validation.get_imagenet_class_accuracies(copy.deepcopy(self.model).half().to(ValLoader.device),
                                                                       ValLoader.data_loader,
-                                                                      ValLoader.device, topk = topk)
+                                                                      ValLoader.device, topk = topk, cv = cv)
         
         del ValLoader
         gc.collect()
@@ -209,12 +232,12 @@ class DNNModel:
         readout.append_readout_layer(self, readout_from)
             
     # todo add more training args as inputs
-    def train_linear_probe(self, readout_from):
+    def train_linear_probe(self, readout_from, sparse_pos = True):
         
         self.readout_from = readout_from
         
         # Train a linear ImageNet probe for self-supervised models
-        readout.train_readout_layer(self, readout_from)
+        readout.train_readout_layer(self, readout_from, sparse_pos)
         
     def load_readout_weights(self, description, device):
         
@@ -237,6 +260,8 @@ class LesionModel(DNNModel):
     def __init__(self, DNNModel, device):
         
         self.model = DNNModel.model
+        self.layer_names_torch = DNNModel.layer_names_torch
+        self.layer_names_fmt = DNNModel.layer_names_fmt
         if hasattr(DNNModel,'selective_units'):
             self.selective_units = DNNModel.selective_units
         self.device = device
@@ -270,13 +295,45 @@ class LesionModel(DNNModel):
         masks['apply'] = False
         self.model.masks = masks
                 
-    def get_imagenet_accs(self, topk = 5): 
+    def get_imagenet_accs(self, topk = 5, cv = False): 
         
         ValLoader = DataLoaderFFCV('val')
         
         self.imagenet_accs = validation.get_imagenet_class_accuracies(copy.deepcopy(self.model).half().to(ValLoader.device),
                                                                       ValLoader.data_loader,
-                                                                      ValLoader.device, topk = topk)
+                                                                      ValLoader.device, topk = topk, cv = cv)
+                          
+                          
+    def get_floc_features(self, ImageSet, field = 'floc_features', device = 'cuda:0', invert = False):
+        
+        data_loader = torch.utils.data.DataLoader(
+                    dataset=ImageSet.images,
+                    batch_size=len(ImageSet.images),
+                    num_workers=1,
+                    shuffle=False,
+                    pin_memory=False
+                )
+
+        image_tensors, _ = next(iter(data_loader))
+        
+        if invert:
+            image_tensors = torch.flip(image_tensors, dims=[2])
+            
+            
+        self.model.eval()
+    
+        with torch.no_grad():
+            with autocast():
+                
+                imgs = image_tensors.to(device)
+                
+                out, acts = self.model(imgs)   
+        
+        setattr(self, field, acts)
+
+        del image_tensors, data_loader
+        torch.cuda.empty_cache()
+        gc.collect()
     
     def get_selective_unit_acts(self, layers):
         
@@ -297,6 +354,22 @@ class LesionModel(DNNModel):
         del ValLoader
         gc.collect()
         torch.cuda.empty_cache()
+        
+    def randomize_selective_unit_indices(self):
+        
+        assert(hasattr(self, 'selective_units'))
+        
+        for domain in self.selective_units['floc_domains']:
+            for layer in list(self.selective_units[domain].keys()):
+                n = len(self.selective_units[domain][layer]['mask'])
+                shuffle_order = np.random.permutation(n)
+                
+                # Shuffle 'mask' and 'tval' according to the permutation
+                self.selective_units[domain][layer]['mask'] = self.selective_units[domain][layer]['mask'][shuffle_order]
+                self.selective_units[domain][layer]['tval'] = self.selective_units[domain][layer]['tval'][shuffle_order]
+                self.selective_units[domain][layer]['shuffle_idx'] = shuffle_order
+        
+        
 
 class fMRISubject:
     def __init__(self, subj, space, beta_version):
@@ -322,14 +395,6 @@ class fMRISubject:
         plotting.plot_ROI_flatmap(self.subj, self.space, title, data, vmin = np.nanmin(data),
                                   vmax=np.nanmax(data),colorbar=True)
         
-            
-    def load_fmri_data(self):
-        # Load fMRI data from the given path and preprocess it
-        pass
-
-    def find_brain_regions(self):
-        # Find brain regions with selectivities and add them to self.brain_regions
-        pass
     
 class BrainRegion(fMRISubject):
     def __init__(self, subj, roi, ncsnr_threshold = 0, plot = False):
@@ -338,7 +403,10 @@ class BrainRegion(fMRISubject):
         
         if exists(self.savefn):
             print('betas already saved. loading...')
-            self.betas = np.load(self.savefn,allow_pickle=True).item().betas
+            try:
+                self.betas = np.load(self.savefn,allow_pickle=True).item().betas
+            except:
+                set_trace()
             self.rep_cocos = self.betas['rep_cocos']
             self.included_voxel_idx = self.betas['included_voxel_idx']
         
@@ -395,6 +463,170 @@ class BrainRegion(fMRISubject):
 
     def save(self):
         np.save(self.savefn, self, allow_pickle=True)
+        
+class EncodingProcedureGistGabor:
+    def __init__(self, ROI, feature_space_name, train_features, test_features, method, positive, alphas):
+        self.ROI = ROI
+        self.feature_space_name = feature_space_name
+        self.train_features = train_features
+        self.test_features = test_features
+        self.method = method
+        self.positive = positive
+        self.alphas = alphas
+        self.layers_to_encode = [self.feature_space_name]
+        
+    def init_mapper(self, method, positive, alpha):
+        self.mdl = get_mapper(method, positive, alpha)
+        
+    def get_encoding_features(self):
+        
+        X = {'train': copy.deepcopy(self.train_features),
+             'test':  copy.deepcopy(self.test_features)}
+        
+        return X
+    
+    def get_encoding_voxels(self, mean = True):
+            
+        y = dict()
+        
+        for partition in ['train','test']:
+            y[partition] = np.concatenate((self.ROI.brain_data[partition]['lh'],
+                                           self.ROI.brain_data[partition]['rh']), axis = 2)
+            
+            if mean:
+                y[partition] = np.mean(y[partition],axis = 1)
+            
+            print('\t\t', partition, y[partition].shape)
+            
+            if self.ROI.ncsnr_mask is not None:
+                print('\t\tmasking')
+                y[partition] = y[partition][..., self.ROI.ncsnr_mask]
+                print('\t\t',partition, y[partition].shape)
+                
+        return y
+    
+    
+    def encode_features(self, savedir, overwrite = False):
+            
+        layers = self.layers_to_encode
+            
+        brain_data_loaded = False
+            
+        for layer in layers:
+            
+            for domain in ['N/A']:
+                
+                self.results_df = pd.DataFrame(columns=['subj','ROI','ncsnr_threshold','model_name','layer', 'domain', 'method', 'positive', 'alpha', 'partition', 'cUnivar', 'cRSA', 'veUnivar', 'veRSA'])
+                
+                print(self.ROI.subj, self.ROI.roi, layer)
+                
+                savefn = f'{savedir}/{self.ROI.subj}_{self.ROI.roi}_nc-{self.ROI.ncsnr_threshold_}_{self.feature_space_name}.csv'
+                                
+                # check if output exists
+                if exists(savefn) and not overwrite:
+                    print('\tresults already computed. loading...')
+                    self.results_df = pd.concat([self.results_df, pd.read_csv(savefn)], ignore_index=True)
+                    
+                else:
+                            
+                    if not brain_data_loaded:
+                        print('\tpreparing encoding brain data...')
+                        y = self.get_encoding_voxels()
+
+                        trues = {'test': {}}
+                        for pt in trues:
+                            trues[pt]['univar'] = np.mean(y[pt],axis=1)
+                            trues[pt]['rsa'] = pdist(y[pt],'correlation')
+                            
+                        brain_data_loaded = True
+                    
+                    print(f'\tpreparing encoding model features... {layer}')
+                    X = self.get_encoding_features()
+
+                    for alpha in self.alphas:
+
+                        self.init_mapper(self.method, self.positive, alpha)
+
+                        print(f'\tfitting model...',self.mdl)
+
+                        if X['train'].shape[1] > 1 and y['train'].shape[1] > 1:
+
+                            self.mdl.fit(X['train'], y['train'])
+                            
+                            if np.all(self.mdl.coef_ == 0):
+                                print('\twarning: all model weights are 0')
+
+                            print(f'\tgenerating predictions...')
+
+                            preds = {'test': {}}
+                            for pt in preds:
+                                pred_y = self.mdl.predict(X[pt])
+                                preds[pt]['univar'] = np.mean(pred_y,axis=1)
+                                preds[pt]['rsa'] = pdist(pred_y,'correlation')
+
+                            print(f'\tcomputing metrics...')
+
+                            # cUnivar
+                            # cRSA
+                            # veUnivar
+                            # veRSA
+                            for pt in ['test']:
+
+                                cUnivar = stats.pearsonr(np.nanmean(X[pt],axis=1),
+                                                         trues[pt]['univar'])[0]
+
+                                model_crdv = pdist(X[pt],'correlation')
+
+                                prop_bad, valid = check_nan_or_inf(model_crdv)
+
+                                if prop_bad > 0.1:
+                                    print(prop_bad)
+                                    cRSA = np.nan
+                                else:
+                                    cRSA = stats.pearsonr(model_crdv[valid],
+                                                          trues[pt]['rsa'][valid])[0]
+
+                                veUnivar = stats.pearsonr(preds[pt]['univar'],
+                                                          trues[pt]['univar'])[0]
+
+                                model_verdv = preds[pt]['rsa']
+                                prop_bad, valid = check_nan_or_inf(model_verdv)
+
+                                if prop_bad > 0.1:
+                                    print(prop_bad)
+                                    veRSA = np.nan
+                                else:
+                                    veRSA = stats.pearsonr(preds[pt]['rsa'][valid],
+                                                           trues[pt]['rsa'][valid])[0]
+
+                                print('\t\t\t',pt, 'cUnivar',round(cUnivar,3), 'cRSA',round(cRSA,3), 'veUnivar',round(veUnivar,3), 'veRSA',round(veRSA,3))
+
+                                result_row = pd.DataFrame({'subj': [self.ROI.subj], 
+                                                           'ROI': [self.ROI.roi], 
+                                                           'ncsnr_threshold': [self.ROI.ncsnr_threshold_],
+                                                           'model_name': [self.feature_space_name], 
+                                                           'layer': [layer], 
+                                                           'domain': [domain], 
+                                                           'method': [self.method],
+                                                           'positive': [self.positive],
+                                                           'alpha': [alpha], 
+                                                           'partition': [pt], 
+                                                           'cUnivar': [cUnivar], 
+                                                           'cRSA': [cRSA], 
+                                                           'veUnivar': [veUnivar], 
+                                                           'veRSA': [veRSA]})
+                                
+                                self.results_df = pd.concat([self.results_df, result_row], ignore_index=True)
+                                print('\tsaving')
+                                self.results_df.to_csv(savefn, index=False)
+
+                        else:
+                            print('\tskipping, insufficient features/voxels')
+                            self.results_df.to_csv(savefn, index=False)
+                                      
+        return        
+    
+    
 
 
 class EncodingProcedure:
@@ -426,14 +658,16 @@ class EncodingProcedure:
             
         return X
     
-    def get_encoding_voxels(self):
+    def get_encoding_voxels(self, mean = True):
             
         y = dict()
         
         for partition in ['train','val','test']:
             y[partition] = np.concatenate((self.ROI.brain_data[partition]['lh'],
                                            self.ROI.brain_data[partition]['rh']), axis = 2)
-            y[partition] = np.mean(y[partition],axis = 1)
+            
+            if mean:
+                y[partition] = np.mean(y[partition],axis = 1)
             
             print('\t\t', partition, y[partition].shape)
             
@@ -452,14 +686,14 @@ class EncodingProcedure:
         if domains is None:
             domains = self.DNN.selective_units['floc_domains']
             
+        model_data_loaded = False
+        brain_data_loaded = False
+            
         for layer in layers:
             
             for domain in domains:
                 
                 self.results_df = pd.DataFrame(columns=['subj','ROI','ncsnr_threshold','model_name','layer', 'domain', 'method', 'positive', 'alpha', 'partition', 'cUnivar', 'cRSA', 'veUnivar', 'veRSA'])
-       
-                model_data_loaded = False
-                brain_data_loaded = False
                 
                 print(self.ROI.subj, self.ROI.roi, layer, domain)
                 
@@ -501,9 +735,12 @@ class EncodingProcedure:
 
                         print(f'\tfitting model...',self.mdl)
 
-                        if X['train'].shape[1] > 1:
+                        if X['train'].shape[1] > 1 and y['train'].shape[1] > 1:
 
                             self.mdl.fit(X['train'], y['train'])
+                            
+                            if np.all(self.mdl.coef_ == 0):
+                                print('\twarning: all model weights are 0')
 
                             print(f'\tgenerating predictions...')
 
@@ -522,7 +759,6 @@ class EncodingProcedure:
                             # veRSA
                             for pt in ['val','test']:
 
-                               # try:
                                 cUnivar = stats.pearsonr(np.nanmean(X[pt],axis=1),
                                                          trues[pt]['univar'])[0]
 
@@ -572,7 +808,8 @@ class EncodingProcedure:
                                 self.results_df.to_csv(savefn, index=False)
 
                         else:
-                            print('\tskipping, no features')
+                            print('\tskipping, insufficient features/voxels')
+                            self.results_df.to_csv(savefn, index=False)
                                       
         return        
         
@@ -584,7 +821,7 @@ def get_mapper(method, positive, alpha):
             mdl = Lasso(positive=positive, alpha = alpha, random_state = 365, 
                     selection = 'random', tol = 1e-2, fit_intercept=True)
     elif method == 'ols':
-            mdl = LinearRegression(positive=positive, fit_intercept=True)
+            mdl = LinearRegression(fit_intercept=True)
             
     return mdl
 

@@ -41,6 +41,7 @@ class FeatureExtractor(nn.Module):
         self.remove_hooks()
         for layer_id in self.layers:
             layer = dict([*self.model.named_modules()])[layer_id]
+
             self.hooks[layer_id] = layer.register_forward_hook(self.save_outputs_hook(layer_id))
     
     def remove_hooks(self):
@@ -163,15 +164,16 @@ def get_layer_shapes(model, layer_names, x):
             shapes = {k:v.shape for k,v in features.items()}
     return shapes
 
-def get_features(model, images, layers_torch, layers_fmt, device):
+def get_features(model, images, in_layers, out_layers, device, lesion_net = False):
     model.eval()
     with torch.no_grad():
-        with FeatureExtractor(model.to(device), layers_torch) as extractor:
+        
+        with FeatureExtractor(model.to(device), in_layers) as extractor:
             features = extractor(images.to(device))
             
     out = dict()
     for i, k in enumerate(features):
-        out[layers_fmt[i]] = features[k].detach().cpu().numpy()
+        out[out_layers[i]] = features[k].detach().cpu().numpy()
         
     del images, extractor, features
     torch.cuda.empty_cache()

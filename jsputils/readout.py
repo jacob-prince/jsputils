@@ -6,12 +6,15 @@ import wandb
 
 N_IMAGENET_CLASSES = 1000
 
-def train_readout_layer(DNN, readout_from):
+def train_readout_layer(DNN, readout_from, sparse_pos = True):
     
     # deal with args
     args = training.arg_helper()
     args.readout_from = readout_from
     args.wandb_repo = 'DNFFA'
+    args.sparse_pos = sparse_pos
+    
+    print(args)
     
     # determine which readout layer is being used and modify model accordingly
     DNN = append_readout_layer(DNN, readout_from)

@@ -54,7 +54,7 @@ num_classes = 1000
 lr_tta = 1
 resolution = 224
 
-def get_imagenet_class_accuracies(model, val_dataloader, device, topk = 5):
+def get_imagenet_class_accuracies(model, val_dataloader, device, topk = 5, cv = False):
     
     model.eval()
     
@@ -85,15 +85,31 @@ def get_imagenet_class_accuracies(model, val_dataloader, device, topk = 5):
     all_pred_labels = np.vstack(pred_labels)
     all_true_labels = np.concatenate(true_labels)
 
-    all_c_accs = np.zeros((len(categs),))
-
-    for c in categs:
-        idx = np.argwhere(all_true_labels == c) # which indices are from this category?
+    if cv:
         
-        if topk > 1:
-            all_c_accs[c] = np.mean(np.sum(np.squeeze(all_pred_labels[idx] == c),axis=1))
-        elif topk == 1:
-            all_c_accs[c] = np.mean(all_pred_labels[idx] == c)
+        all_c_accs = np.zeros((len(categs),2))
+        
+        for p, subset in enumerate([np.arange(25), np.arange(25,50)]):
+            
+            for c in categs:
+                idx = np.argwhere(all_true_labels == c)[subset] # which indices are from this category?
+
+                if topk > 1:
+                    all_c_accs[c,p] = np.mean(np.sum(np.squeeze(all_pred_labels[idx] == c),axis=1))
+                elif topk == 1:
+                    all_c_accs[c,p] = np.mean(all_pred_labels[idx] == c)
+
+    else:
+        
+        all_c_accs = np.zeros((len(categs),))
+
+        for c in categs:
+            idx = np.argwhere(all_true_labels == c) # which indices are from this category?
+
+            if topk > 1:
+                all_c_accs[c] = np.mean(np.sum(np.squeeze(all_pred_labels[idx] == c),axis=1))
+            elif topk == 1:
+                all_c_accs[c] = np.mean(all_pred_labels[idx] == c)
             
     del imgs, out, preds, target
     gc.collect()

@@ -62,7 +62,7 @@ def arg_helper():
     parser.add_argument('--sparse-pos', default=True, 
                         type=bool, metavar='W', help='enable sparse positive clf?')
 
-    parser.add_argument('--l1-pos-lambda', default=1e-05, 
+    parser.add_argument('--l1-pos-lambda', default=0.0001, 
                         type=float, metavar='L', help='if sparse-pos is enabled, l1 lambda applied to positive weights')
 
     parser.add_argument('--l1-neg-lambda', default=0.0001, 
@@ -196,9 +196,10 @@ def main_training_loop(DNN, train_loader, val_loader, args):
             for images, target, _, _ in progress_bar(val_loader):
                 output = DNN.readout_model(images.to(args.device, non_blocking=True))
                 acc1, acc5 = accuracy(output, target.to(args.device, non_blocking=True), topk=(1, 5))
+                
                 top1.update(acc1[0].item(), images.size(0))
                 top5.update(acc5[0].item(), images.size(0))
-
+                
         best_acc.top1 = max(best_acc.top1, top1.avg)
         best_acc.top5 = max(best_acc.top5, top5.avg)
         stats = dict(epoch=epoch, acc1=top1.avg, acc5=top5.avg, best_acc1=best_acc.top1, best_acc5=best_acc.top5)
