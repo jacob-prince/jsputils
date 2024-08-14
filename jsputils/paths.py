@@ -4,6 +4,9 @@ def base():
 def nsd():
     return f'{base()}/DataLocal-w/NSD'
 
+def nsd_primate_data():
+    return f'{base()}/DropboxSandbox/NSD-Primate'
+
 def nsd_stimuli():
     return f'{nsd()}/nsddata_stimuli/stimuli/nsd'
 
@@ -48,5 +51,7 @@ def dnn_dropout_weightdir():
 
 def brain_region_savedir():
     return f'{base()}/DataLocal-w/NSD_processed_data'  
-    
+
+def imagenet_valdir():
+    return f'/{base()}/DataLocal-ro/imagenet1k-orig/val'
     
