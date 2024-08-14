@@ -17,6 +17,7 @@ from IPython.core.debugger import set_trace
 from sklearn.linear_model import Lasso, LinearRegression
 import scipy.stats as stats
 from scipy.spatial.distance import pdist
+import pickle
 
 class NSDImageSet(Dataset):
     def __init__(self, numpy_images, transforms=None):
@@ -43,7 +44,13 @@ class ImageSet:
         self.image_folder = f'{paths.image_set_dir()}/{self.image_set_name}'
         self.transforms = transforms
         
-        if image_set_name == 'vpnl-floc':
+        if image_set_name == 'accentuated-floc':
+            self.categ_nimg = 40
+            self.floc_subdirs = ['1-Faces', '2-Scenes', '3-Objects']
+            self.floc_domains = self.floc_subdirs
+            self.subdir_domain_ref = np.array([0,1,2])
+            
+        elif image_set_name == 'vpnl-floc':
             self.categ_nimg = 144
             self.floc_subdirs = np.array(['adult','body','car','child','corridor','house',
                                                        'instrument','limb','number','scrambled','word'])
@@ -85,7 +92,8 @@ class ImageSet:
             
         for subdir in os.listdir(self.image_folder):
             if os.path.isdir(subdir):
-                assert(len(os.listdir(f'{self.image_folder}/{subdir}')) == self.categ_nimg)
+                if not 'accentuated' in self.image_set_name:
+                    assert(len(os.listdir(f'{self.image_folder}/{subdir}')) == self.categ_nimg)
             
         self.img_domain_indices = np.repeat(self.subdir_domain_ref, self.categ_nimg)
         
@@ -105,17 +113,25 @@ class ImageSet:
 #############
 
 class DataLoaderFFCV:
-    def __init__(self, partition, device = 'cuda:0', batch_size = 512, num_workers = 64, resolution = 224, normalize = True):
+    def __init__(self, partition, indices = None, device = 'cuda:0', batch_size = 512, num_workers = 64, resolution = 224, normalize = True):
         self.partition = partition
+        self.indices = indices
         self.device = device
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.resolution = resolution
         self.normalize = normalize
         if self.partition == 'train':
-            pass
+            self.data_loader = validation.create_val_loader(paths.ffcv_imagenet1k_trainset(), 
+                                                            self.indices,
+                                                            self.device,
+                                                            self.num_workers, 
+                                                            self.batch_size,
+                                                            self.resolution,
+                                                            self.normalize)
         elif self.partition == 'val':
             self.data_loader = validation.create_val_loader(paths.ffcv_imagenet1k_valset(), 
+                                                            self.indices,
                                                             self.device,
                                                             self.num_workers, 
                                                             self.batch_size,
@@ -178,7 +194,7 @@ class DNNModel:
             torchvision.transforms.Lambda(lambda x: Image.fromarray(x.numpy()))
         ] 
 
-        if self.model_name == 'alexnet-vggface':
+        if self.model_name == 'alexnet-vggface' or self.model_name == 'alexnet-supervised':
             # Create a new Compose object with the updated list
             transforms_list = torchvision.transforms.Compose([transforms_list[0],
                                                               self.transforms])
@@ -282,13 +298,14 @@ class LesionModel(DNNModel):
                                                           self.device, 
                                                           p)
         
-    def apply_channelized_lesions(self, domain, method):
+    def apply_channelized_lesions(self, domain, method, k = None):
         self.lsn_method = method
         self.model.masks = lesioning.get_channelized_lesioning_masks(self,
                                                                      self.layer_dims,
                                                                      domain,
                                                                      method,
-                                                                     self.device)
+                                                                     self.device,
+                                                                     k)
         
     def remove_randomized_lesions(self):
         masks = dict()
@@ -400,13 +417,16 @@ class BrainRegion(fMRISubject):
     def __init__(self, subj, roi, ncsnr_threshold = 0, plot = False):
         
         self.savefn = f'{subj.processed_datadir}/{subj.space}_{roi}.npy'
+        self.space = subj.space
         
         if exists(self.savefn):
             print('betas already saved. loading...')
             try:
                 self.betas = np.load(self.savefn,allow_pickle=True).item().betas
             except:
-                set_trace()
+                self.subj = subj
+                self.betas = self.load_betas()
+                #set_trace()
             self.rep_cocos = self.betas['rep_cocos']
             self.included_voxel_idx = self.betas['included_voxel_idx']
         
@@ -448,7 +468,7 @@ class BrainRegion(fMRISubject):
             
     def load_encoding_data(self, train_imageset, val_imageset, test_imageset):
         print('loading train, val, and test data')
-        self.image_data, self.brain_data = nsdorg.get_NSD_encoding_images_and_betas(subj = self.subj,
+        self.image_data, self.brain_data, self.image_metadata = nsdorg.get_NSD_encoding_images_and_betas(subj = self.subj,
                                                                                       space = self.space,
                                                                                       subj_betas = self.betas,
                                                                                       rep_cocos = self.rep_cocos,
@@ -459,10 +479,19 @@ class BrainRegion(fMRISubject):
         
     def get_ncsnr_mask(self, threshold):
         self.ncsnr_threshold_ = threshold
-        self.ncsnr_mask = self.ncsnr[self.included_voxel_idx['full']] > self.ncsnr_threshold_
+        self.ncsnr_mask = copy.deepcopy(self.ncsnr[self.included_voxel_idx['full']] > self.ncsnr_threshold_)
 
     def save(self):
-        np.save(self.savefn, self, allow_pickle=True)
+        
+        try:
+            np.save(self.savefn, self, allow_pickle=True)
+        except:
+            print('saving as pickle...')
+
+            with open(self.savefn, 'wb') as f:
+                # Use pickle protocol 4
+                pickle.dump(self, f, protocol=4)
+        
         
 class EncodingProcedureGistGabor:
     def __init__(self, ROI, feature_space_name, train_features, test_features, method, positive, alphas):
@@ -814,14 +843,14 @@ class EncodingProcedure:
         return        
         
                     
-def get_mapper(method, positive, alpha):
+def get_mapper(method, positive, alpha, fit_intercept = True):
     # choose OLS or lasso
     # choose positive = True or False
     if method == 'lasso':
             mdl = Lasso(positive=positive, alpha = alpha, random_state = 365, 
-                    selection = 'random', tol = 1e-2, fit_intercept=True)
+                    selection = 'random', tol = 1e-2, fit_intercept=fit_intercept)
     elif method == 'ols':
-            mdl = LinearRegression(fit_intercept=True)
+            mdl = LinearRegression(fit_intercept=fit_intercept)
             
     return mdl
 
