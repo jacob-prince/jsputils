@@ -13,6 +13,7 @@ def lesion(x,mask,apply):
             if mask.shape[0] == x.shape[0] and mask.shape[-1] == x.shape[-1]:
                 mask = torch.squeeze(mask)
             else:
+                print(x.shape, mask.shape)
                 raise ValueError('mask and activation shapes are not equal')
         if torch.sum(torch.isnan(x*mask)) > 0:
             set_trace()
@@ -55,7 +56,7 @@ def get_layer_dims(model, device):
     
     return lay_dims
 
-def get_channelized_lesioning_masks(LSN, lay_dims, domain, method, device):
+def get_channelized_lesioning_masks(LSN, lay_dims, domain, method, device, k = None):
     
     print(f'applying channelized lesions for domain: {domain}')
     
@@ -70,10 +71,47 @@ def get_channelized_lesioning_masks(LSN, lay_dims, domain, method, device):
             condition = 'relu' in layer
         elif method == 'full':
             condition = layer != LSN.model.layer_names[-1]
+        elif method == 'relus_1-5':
+            condition = 'relu' in layer and int(layer[-1]) <= 5
+        elif method == 'until_relu6':
+            condition = layer not in LSN.model.layer_names[-5:]
+        elif method == 'fc6':
+            condition = layer == 'fc6'
+        elif method == 'avgpool5':
+            condition = layer == 'avgpool5'
+        elif method == 'relu5':
+            condition = layer == 'relu5'
             
         if condition:
-            mask = torch.from_numpy(LSN.selective_units[domain][layer]['mask'])
-            mask = torch.logical_not(mask).float().view(dims)
+            
+            if k is not None: 
+                
+                assert(k < 1)
+                
+                tvals = copy.deepcopy(LSN.selective_units[domain][layer]['tval'])
+                tvals[np.isnan(tvals)] = -999
+                # Flatten the array to 1D
+                flattened_tvals = tvals.flatten()
+
+                # Calculate the 95th percentile value
+                threshold = np.percentile(flattened_tvals, (1-k) * 100)
+                
+                print(threshold)
+                # Create a boolean mask for values to set to 0 (top 5%)
+                mask = flattened_tvals > threshold
+
+                # Create a new array based on the mask, where the top 5% values are set to 0 and the rest to 1
+                flattened_tvals[mask] = 0
+                flattened_tvals[~mask] = 1
+
+                # Reshape the 1D array back to the shape of the activation matrix
+                mask = torch.from_numpy(flattened_tvals.reshape(tvals.shape)).float().view(dims)
+            
+            else:
+
+                mask = torch.from_numpy(LSN.selective_units[domain][layer]['mask'])
+                mask = torch.logical_not(mask).float().view(dims)
+                
             prop = mask.eq(0).float().mean()
             count = mask.eq(0).float().sum()
             print(f'\t\tproportion units lesioned in layer {layer}: {round(prop.item(),3)}')
@@ -175,11 +213,11 @@ class LesionNet(nn.Module):
             
             # apply lesioning
             #x = lesion(x, mask, self.masks['apply'])
-            try:
-                x = lesion(x, mask, self.masks['apply'])
-            except:
-                print(layer)
-                set_trace()
+            #try:
+            x = lesion(x, mask, self.masks['apply'])
+            #except:
+            #    print(layer)
+            #    set_trace()
             
             if self.return_acts:
                 activations[layer] = x
