@@ -107,7 +107,7 @@ def run_dnn_localizer_procedure(DNN, fLOC, FDR_p, overwrite, verbose):
                     Y = Y.reshape(Y.shape[0],Y.shape[1]*Y.shape[2]*Y.shape[3])
 
                 if verbose:
-                    print(Y.shape)
+                    print(layer, Y.shape)
 
                 selective_units[layer] = compute_selectivity(Y, 
                                                              fLOC.img_domain_indices, 
@@ -132,7 +132,6 @@ def run_dnn_localizer_procedure(DNN, fLOC, FDR_p, overwrite, verbose):
     return all_selective_units
     
 
-
 def compute_selectivity(Y, all_domain_idx, target_domain_val, FDR_p, verbose=True):
     
     assert(Y.ndim == 2)
@@ -150,37 +149,65 @@ def compute_selectivity(Y, all_domain_idx, target_domain_val, FDR_p, verbose=Tru
         print(f'\tsize of layer is {n_neurons_in_layer} units.')
         print(f'\tshape of Y_curr is {Y_curr.shape}')
     
+    out = dict()
+    
+    # ttest method
     pairwise_selective_idx = []
     pairwise_tvals = []
     pairwise_pvals = []
-    
+
     for this_domain_val in unique_domain_vals:
-        
+
         # skip if test was domain vs. same domain
         if this_domain_val != target_domain_val:
-        
+
             Y_test = copy.deepcopy(Y[all_domain_idx==this_domain_val])
-            
+
             # calculate t and p maps
             t,p = stats.ttest_ind(Y_curr, Y_test, axis=0)
-            
+
             # determine which neurons remain significant after FDR correction
             # https://stats.stackexchange.com/questions/63441/what-are-the-practical-differences-between-the-benjamini-hochberg-1995-and-t
             reject, pvals_corrected, _, _ = statsmodels.multipletests(p, alpha=FDR_p, method='FDR_by', 
                                 is_sorted=False, returnsorted=False)
-            
+
             # dom neurons have t > 0 and reject is True
             pairwise_selective_idx.append(np.logical_and(reject == True, t > 0))
             pairwise_tvals.append(t)
             pairwise_pvals.append(pvals_corrected)
-            
-    out = dict()
+
     out['mask'] = np.all(np.vstack(pairwise_selective_idx), axis = 0)
     out['tval'] = np.nanmean(np.vstack(pairwise_tvals), axis = 0)
     out['pval'] = np.nanmean(np.vstack(pairwise_pvals), axis = 0)
+       
+    # New mean ratio based computation
+    mean_ratio_matrix = []
+    selective_idx_matrix = []
+
+    for this_domain_val in unique_domain_vals:
+        if this_domain_val != target_domain_val:
+            Y_other = copy.deepcopy(Y[all_domain_idx == this_domain_val])
+            mean_target = Y_curr.mean(axis=0)
+            mean_other = Y_other.mean(axis=0)
+
+            # Compute the ratio of mean responses
+            ratio = mean_target / mean_other
+            mean_ratio_matrix.append(ratio)
+
+            # Determine selectivity based on ratio
+            selective_idx = ratio >= 2
+            selective_idx_matrix.append(selective_idx)
+
+    # Convert lists to arrays for easier manipulation
+    mean_ratio_matrix = np.vstack(mean_ratio_matrix)
+    selective_idx_matrix= np.vstack(selective_idx_matrix)
+
+    out['mask-2x'] = np.all(selective_idx_matrix, axis=0)  # Units selective across all comparisons
+    out['mean_ratios'] = mean_ratio_matrix
     
     if verbose:
-        print(f"\t\tfinal size of region for {target_domain_val} is {np.sum(out['mask'])} units.")
+        print(f"\t\tfinal size of region for {target_domain_val} is {np.sum(out['mask'])} units using ttest method.")
+        print(f"\t\tfinal size of region for {target_domain_val} is {np.sum(out['mask-2x'])} units using 2x method.")
         
     return out
 
