@@ -84,7 +84,7 @@ def get_imagenet_class_accuracies(model, val_dataloader, device, topk = 5, cv = 
     
     all_pred_labels = np.vstack(pred_labels)
     all_true_labels = np.concatenate(true_labels)
-
+    
     if cv:
         
         all_c_accs = np.zeros((len(categs),2))
@@ -244,8 +244,7 @@ def validate_trained_model(model_dir, dropout_prop, learning_rate, lr_peak,
     
     return stats, model_str
      
-def create_val_loader(val_dataset, device = 'cuda:0', num_workers = 64, batch_size = 512, resolution = 256,
-                          batches_ahead = 3, distributed = 0, normalize = True):
+def create_val_loader(val_dataset, indices = None, device = 'cuda:0', num_workers = 64, batch_size = 512, resolution = 256, batches_ahead = 3, distributed = 0, normalize = True):
     
         val_path = Path(val_dataset)
         assert val_path.is_file()
@@ -277,6 +276,7 @@ def create_val_loader(val_dataset, device = 'cuda:0', num_workers = 64, batch_si
         ]
         
         loader = Loader(val_dataset,
+                        indices=indices,
                         batch_size=batch_size,
                         batches_ahead=batches_ahead,
                         num_workers=num_workers,
