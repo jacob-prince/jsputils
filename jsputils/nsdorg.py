@@ -5,6 +5,7 @@ import nibabel as nib
 import pandas as pd
 import scipy.stats as stats
 import h5py
+import copy
 from IPython.core.debugger import set_trace
 from jsputils import paths, plotting
 from fastprogress import progress_bar
@@ -42,7 +43,8 @@ def get_coco_dict(subjs, annotations):
     for subj in subjs:
 
         coco_dict[subj] = dict()
-
+        coco_dict[subj]['all'] = np.sort(np.unique(annotations[subj].index))
+        
         # get indices of subject-specific non-shared cocos
         coco_dict[subj]['shared'] = np.sort(np.intersect1d(np.unique(annotations[subj].index), coco_dict['shared1000']))
         coco_dict[subj]['nonshared'] = np.sort(np.setdiff1d(np.unique(annotations[subj].index), coco_dict['shared1000']))
@@ -326,11 +328,13 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
     voxel_group_info = {'nativesurface': 
                             {'nsdgeneral': ('nsdgeneral',        1),
                              'V1v':        ('prf-visualrois.label',    'V1v'),
+                             'hV4':        ('prf-visualrois.label',    'hV4'),
                              'FFA-1':      ('floc-faces.label',  'FFA-1'),
                              'FFA-2':      ('floc-faces.label',  'FFA-2'),
                              'OFA':        ('floc-faces.label',  'OFA'),
                              'PPA':        ('floc-places.label', 'PPA'),
                              'OPA':        ('floc-places.label', 'OPA'),
+                             'RSC':        ('floc-places.label', 'RSC'),
                              'EBA':        ('floc-bodies.label', 'EBA'),
                              'FBA-1':      ('floc-bodies.label', 'FBA-1'),
                              'FBA-2':      ('floc-bodies.label', 'FBA-2'),
@@ -341,6 +345,7 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
                        'func1pt8mm':
                             {'nsdgeneral': ('nsdgeneral',        1),
                              'V1v':        ('prf-visualrois.label',    'V1v'),
+                             'hV4':        ('prf-visualrois.label',    'hV4'),
                              'FFA-1':      ('floc-faces.label',  'FFA-1'),
                              'FFA-2':      ('floc-faces.label',  'FFA-2'),
                              'OFA':        ('floc-faces.label',  'OFA'),
@@ -367,6 +372,10 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
         else:
             include_idx['full'] = np.logical_and(roi_dfs[0][field].values == incl_val, 
                                                  roi_dfs[0]['ncsnr'].values > ncsnr_threshold)
+            
+        ### plot 
+        plot_data = copy.deepcopy(roi_dfs[0]['ncsnr'].values)
+        plot_data[include_idx['full'] == 0] = np.nan
 
     elif space == 'nativesurface':
         
@@ -395,10 +404,10 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
 
         include_idx['full'] = np.concatenate((include_idx['lh'], include_idx['rh']))
         
-    ### plot 
-    plot_data = np.concatenate((roi_dfs[0][f'lh.ncsnr'].values, 
-                                roi_dfs[1][f'rh.ncsnr'].values))
-    plot_data[include_idx['full'] == 0] = np.nan
+        ### plot 
+        plot_data = np.concatenate((roi_dfs[0][f'lh.ncsnr'].values, 
+                                    roi_dfs[1][f'rh.ncsnr'].values))
+        plot_data[include_idx['full'] == 0] = np.nan
     #np.concatenate((include_idx['lh'], include_idx['rh']))
     #plot_data[plot_data == 1] = np.concatenate((roi_dfs[0][f'lh.ncsnr'].values, 
     #                                            roi_dfs[1][f'rh.ncsnr'].values))[plot_data == 1]
@@ -646,7 +655,15 @@ def get_NSD_encoding_images_and_betas(subj, space, subj_betas, rep_cocos, train_
             encoding_cocos[partitions[p]] = coco_dict[subj][images]
         except:
             encoding_cocos[partitions[p]] = coco_dict[images]
-
+            
+    used_cocos = np.concatenate((encoding_cocos['train'],
+                                 encoding_cocos['val'], 
+                                 encoding_cocos['test']))
+    
+    encoding_cocos['other'] = np.setdiff1d(coco_dict[subj]['all'],used_cocos)
+    
+    partitions += ['other']
+            
     nc = dict()
     for partition in partitions:
         nc[partition] = len(encoding_cocos[partition])
@@ -656,12 +673,19 @@ def get_NSD_encoding_images_and_betas(subj, space, subj_betas, rep_cocos, train_
     dim = stim_f['imgBrick'].shape
 
     image_data = dict()
+    image_data['encoding_cocos'] = encoding_cocos
+    
+    image_metadata = dict()
+    
     brain_data = dict()
 
     for partition in partitions:
 
         image_data[partition] = np.empty((nc[partition], dim[1], dim[2], dim[3]), dtype=np.uint8)
         brain_data[partition] = dict()
+        image_metadata[partition] = dict()
+        image_metadata[partition]['nsd_stim_metadata'] = []
+        image_metadata[partition]['coco_annotations'] = []
 
         for hemi in hemis:
             brain_data[partition][hemi] = np.empty((nc[partition], 3, subj_betas[hemi].shape[2]), dtype=float)
@@ -675,14 +699,22 @@ def get_NSD_encoding_images_and_betas(subj, space, subj_betas, rep_cocos, train_
             idx73k = stim_info_df.iloc[stim_info_df['cocoId'].values == coco]['nsdId'].values[0]
 
             image_data[partition][c] = stim_f['imgBrick'][idx73k]
-
+            
+            image_metadata[partition]['nsd_stim_metadata'].append(stim_info_df.iloc[stim_info_df['cocoId'].values == coco].iloc[0])
+            image_metadata[partition]['coco_annotations'].append(annotations[subj].loc[coco].iloc[0])
+            
             for hemi in hemis:
                 brain_data[partition][hemi][c] = subj_betas[hemi][idx10k]
-
+            
+        if partition in ['train','val','test']:
+            image_metadata[partition]['nsd_stim_metadata'] = pd.DataFrame(image_metadata[partition]['nsd_stim_metadata'])
+            image_metadata[partition]['coco_annotations'] = pd.DataFrame(image_metadata[partition]['coco_annotations'])
+        
         for hemi in hemis:
             
             if mean:
                 # need nanmean in case subject is missing data
                 brain_data[partition][hemi] = np.nanmean(brain_data[partition][hemi], axis = 1)
             
-    return image_data, brain_data
+    return image_data, brain_data, image_metadata
+
