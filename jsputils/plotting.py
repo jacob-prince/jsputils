@@ -2,6 +2,7 @@ import cortex
 import numpy as np
 import matplotlib.pyplot as plt
 from jsputils import nnutils, nsdorg
+from mpl_toolkits.mplot3d import axes3d, art3d
 from IPython.core.debugger import set_trace
 
 def plot_ROI_flatmap(subj, space, roi_group, included_voxels, mapper='nearest',vmin=0,vmax=1,cmap='magma',colorbar=True):
@@ -69,3 +70,88 @@ def plot_selective_unit_props(selective_unit_dict):
     plt.show()
     
     return
+
+def pca_plot(all_pcs, ax, title = None, cs = ['k'], ss = [1], als = [1], rot = 0, lim = None, elv = 20):
+
+    for p, pcs in enumerate(all_pcs):
+        x, y, z = pcs[:,0], pcs[:,1], pcs[:,2]
+
+        ax.scatter3D(xs = x, ys = y, zs = z, c = cs[p],
+                     s = ss[p], alpha = als[p])
+
+    # remove axis labels
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.set_zticklabels([])
+
+    # remove axis ticks
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
+
+    # remove axis lines
+    ax.w_xaxis.line.set_color((1.0, 1.0, 1.0, 0.0))
+    ax.w_yaxis.line.set_color((1.0, 1.0, 1.0, 0.0))
+    ax.w_zaxis.line.set_color((1.0, 1.0, 1.0, 0.0))
+
+    # transparent background
+    ax.w_xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    ax.w_yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+    ax.w_zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+
+    # remove background entirely
+    ax.set_facecolor((1.0, 1.0, 1.0, 0.0))
+
+    def lims(mplotlims):
+        scale = 1.021
+        offset = (mplotlims[1] - mplotlims[0])*scale
+        return mplotlims[1] - offset, mplotlims[0] + offset
+
+    xlims, ylims, zlims = lims(ax.get_xlim()), lims(ax.get_ylim()), lims(ax.get_zlim())
+    i = np.array([xlims[0], ylims[0], zlims[0]])
+    f = np.array([xlims[0], ylims[1], zlims[0]])
+    p = art3d.Poly3DCollection(np.array([[i, f]]))
+    p.set_color('black')
+    ax.add_collection3d(p)
+
+    i = np.array([xlims[0], ylims[1], zlims[0]])
+    f = np.array([xlims[0], ylims[1], zlims[1]])
+    p = art3d.Poly3DCollection(np.array([[i, f]]))
+    p.set_color('black')
+    ax.add_collection3d(p)
+
+    i = np.array([xlims[0], ylims[1], zlims[0]])
+    f = np.array([xlims[1], ylims[1], zlims[0]])
+    p = art3d.Poly3DCollection(np.array([[i, f]]))
+    p.set_color('black')
+    ax.add_collection3d(p)
+    
+    if lim:
+        ax.set_xlim([-lim,lim])
+        ax.set_ylim([-lim,lim])
+        ax.set_zlim([-lim,lim])
+        
+    # Adjust text positions based on viewing angle
+    if 0 <= rot < 90:
+        # Adjust for first quadrant view
+        ax.text(xlims[0], ylims[0], zlims[0], 'PC2', ha='right', va='top')
+        ax.text(xlims[1], ylims[1], zlims[0], 'PC1', ha='left', va='top')
+        ax.text(xlims[0], ylims[1], zlims[1], 'PC3', ha='center', va='bottom')
+    elif 90 <= rot < 180:
+        ax.text(xlims[0], ylims[0], zlims[0], 'PC2', ha='right', va='top')
+        ax.text(xlims[1], ylims[1], zlims[0], 'PC1', ha='left', va='top')
+        ax.text(xlims[0], ylims[1], zlims[1], 'PC3', ha='center', va='bottom')
+    elif 180 <= rot < 270:
+        ax.text(xlims[0], ylims[0], zlims[0], 'PC2', ha='right', va='top')
+        ax.text(xlims[1], ylims[1], zlims[0], 'PC1', ha='left', va='top')
+        ax.text(xlims[0], ylims[1], zlims[1], 'PC3', ha='center', va='bottom')
+    else:
+        ax.text(xlims[0], ylims[0], zlims[0], 'PC2', ha='right', va='top')
+        ax.text(xlims[1], ylims[1], zlims[0], 'PC1', ha='left', va='top')
+        ax.text(xlims[0], ylims[1], zlims[1], 'PC3', ha='center', va='bottom')
+
+    ax.view_init(elev=elv, azim=rot)
+
+    plt.gca().grid(False)
+    if title:
+        plt.title(title)
