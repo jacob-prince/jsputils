@@ -331,6 +331,7 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
                              'hV4':        ('prf-visualrois.label',    'hV4'),
                              'FFA-1':      ('floc-faces.label',  'FFA-1'),
                              'FFA-2':      ('floc-faces.label',  'FFA-2'),
+                             'aTL-faces':  ('floc-faces.label',  'aTL-faces'),
                              'OFA':        ('floc-faces.label',  'OFA'),
                              'PPA':        ('floc-places.label', 'PPA'),
                              'OPA':        ('floc-places.label', 'OPA'),
@@ -348,6 +349,7 @@ def get_voxel_group(subj, space, voxel_group, ncsnr_threshold, roi_dfs, plot = T
                              'hV4':        ('prf-visualrois.label',    'hV4'),
                              'FFA-1':      ('floc-faces.label',  'FFA-1'),
                              'FFA-2':      ('floc-faces.label',  'FFA-2'),
+                             'aTL-faces':  ('floc-faces.label',  'aTL-faces'),
                              'OFA':        ('floc-faces.label',  'OFA'),
                              'PPA':        ('floc-places.label', 'PPA'),
                              'OPA':        ('floc-places.label', 'OPA'),
@@ -573,67 +575,7 @@ def load_betas(subj, space, voxel_group, ncsnr_threshold = 0.2,
   
     return subj_betas, roi_dfs, include_idx, rep_cocos
 
-def get_NSD_train_test_images(subj, train_imageset, test_imageset):
-    
-    stim_info_fn = f'{nsddir}/nsddata/experiments/nsd/nsd_stim_info_merged.csv'
-    stim_info_df = pd.read_csv(stim_info_fn)
-    
-    subjs = [f'subj0{s}' for s in range(1,9)]
-    annotations = load_NSD_coco_annotations(subjs, savedir = paths.nsd_coco_annots())
-    
-    coco_dict = get_coco_dict(subjs, annotations)
-
-    encoding_cocos = dict()
-    try:
-        encoding_cocos['train'] = coco_dict[subj][train_imageset]
-    except:
-        encoding_cocos['train'] = coco_dict[train_imageset]
-    try:
-        encoding_cocos['test'] = coco_dict[subj][test_imageset]
-    except:
-        encoding_cocos['test'] = coco_dict[test_imageset]
-        
-    subj_df = stim_info_df.iloc[stim_info_df[f'subject{subj[-1]}'].values==1]
-
-    rep_indices = np.empty((subj_df.shape[0], 3), dtype=int)
-    rep_cocos = []
-
-    for i in range(rep_indices.shape[0]):
-
-        # subtract 1 to get to 0 indexed
-        rep_indices[i] = np.array([subj_df[f'subject{subj[-1]}_rep{r}'].values[i] for r in range(3)]) - 1
-
-        rep_cocos.append(subj_df['cocoId'].values[i])
-
-    rep_cocos = np.array(rep_cocos)
-
-    nc = dict()
-    nc['train'] = len(encoding_cocos['train'])
-    nc['test'] = len(encoding_cocos['test'])
-    
-    # access nsd stimuli
-    stim_f = h5py.File(f'{paths.nsd_stimuli()}/nsd_stimuli.hdf5', 'r')
-    dim = stim_f['imgBrick'].shape
-
-    image_data = dict()
-
-    for partition in ['train','test']:
-
-        image_data[partition] = np.empty((nc[partition], dim[1], dim[2], dim[3]), dtype=np.uint8)
-
-        for c, coco in enumerate(encoding_cocos[partition]):
-
-            # where in the brain data does this coco live?
-            idx10k = np.squeeze(np.argwhere(rep_cocos == coco))
-
-            # where in the stimulus brick does this coco live?
-            idx73k = stim_info_df.iloc[stim_info_df['cocoId'].values == coco]['nsdId'].values[0]
-
-            image_data[partition][c] = stim_f['imgBrick'][idx73k]
-  
-    return image_data
-
-def get_NSD_encoding_images_and_betas(subj, space, subj_betas, rep_cocos, train_imageset, val_imageset, test_imageset, mean = True):
+def get_NSD_encoding_images_and_betas(subj, space, subj_betas, rep_cocos, partition_dict, mean = True):
     
     if space == 'nativesurface':
         hemis = ['lh','rh']
@@ -649,23 +591,23 @@ def get_NSD_encoding_images_and_betas(subj, space, subj_betas, rep_cocos, train_
     coco_dict = get_coco_dict(subjs, annotations)
 
     encoding_cocos = dict()
-    partitions = ['train','val','test']
-    for p, images in enumerate([train_imageset, val_imageset, test_imageset]):
+    used_cocos = []
+    
+    for partition in partition_dict:
         try:
-            encoding_cocos[partitions[p]] = coco_dict[subj][images]
+            encoding_cocos[partition] = coco_dict[subj][partition_dict[partition]]
         except:
-            encoding_cocos[partitions[p]] = coco_dict[images]
+            encoding_cocos[partition] = coco_dict[partition_dict[partition]]
             
-    used_cocos = np.concatenate((encoding_cocos['train'],
-                                 encoding_cocos['val'], 
-                                 encoding_cocos['test']))
+        used_cocos.append(encoding_cocos[partition])
+            
+    used_cocos = np.concatenate(used_cocos)
     
     encoding_cocos['other'] = np.setdiff1d(coco_dict[subj]['all'],used_cocos)
-    
-    partitions += ['other']
+    partition_dict['other'] = 'other'
             
     nc = dict()
-    for partition in partitions:
+    for partition in partition_dict:
         nc[partition] = len(encoding_cocos[partition])
     
     # access nsd stimuli
@@ -679,7 +621,7 @@ def get_NSD_encoding_images_and_betas(subj, space, subj_betas, rep_cocos, train_
     
     brain_data = dict()
 
-    for partition in partitions:
+    for partition in partition_dict:
 
         image_data[partition] = np.empty((nc[partition], dim[1], dim[2], dim[3]), dtype=np.uint8)
         brain_data[partition] = dict()
@@ -701,20 +643,24 @@ def get_NSD_encoding_images_and_betas(subj, space, subj_betas, rep_cocos, train_
             image_data[partition][c] = stim_f['imgBrick'][idx73k]
             
             image_metadata[partition]['nsd_stim_metadata'].append(stim_info_df.iloc[stim_info_df['cocoId'].values == coco].iloc[0])
-            image_metadata[partition]['coco_annotations'].append(annotations[subj].loc[coco].iloc[0])
+            
+            if type(annotations[subj].loc[coco].iloc[0]) == list:
+                image_metadata[partition]['coco_annotations'].append(annotations[subj].loc[coco])
+            else:
+                image_metadata[partition]['coco_annotations'].append(annotations[subj].loc[coco].iloc[0])
             
             for hemi in hemis:
                 brain_data[partition][hemi][c] = subj_betas[hemi][idx10k]
-            
-        if partition in ['train','val','test']:
-            image_metadata[partition]['nsd_stim_metadata'] = pd.DataFrame(image_metadata[partition]['nsd_stim_metadata'])
-            image_metadata[partition]['coco_annotations'] = pd.DataFrame(image_metadata[partition]['coco_annotations'])
         
         for hemi in hemis:
             
             if mean:
                 # need nanmean in case subject is missing data
                 brain_data[partition][hemi] = np.nanmean(brain_data[partition][hemi], axis = 1)
+                
+    for partition in partition_dict:
+            image_metadata[partition]['nsd_stim_metadata'] = pd.DataFrame(image_metadata[partition]['nsd_stim_metadata'])
+            image_metadata[partition]['coco_annotations'] = pd.DataFrame(image_metadata[partition]['coco_annotations'])
             
     return image_data, brain_data, image_metadata
 
