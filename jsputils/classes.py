@@ -449,6 +449,10 @@ class BrainRegion(fMRISubject):
                                          self.metadata[1]['rh.ncsnr'].values))
 
             self.ncsnr[np.logical_not(self.roi_indices['full'])] = np.nan
+            
+            self.ncsnr_lh = self.metadata[0]['lh.ncsnr'].values
+            self.ncsnr_rh = self.metadata[1]['rh.ncsnr'].values
+            
         elif self.space == 'func1pt8mm':
             raise ValueError('not implemented yet')
         
@@ -466,20 +470,20 @@ class BrainRegion(fMRISubject):
             self.betas['included_voxel_idx'] = self.included_voxel_idx
             self.save()
             
-    def load_encoding_data(self, train_imageset, val_imageset, test_imageset):
+    def load_encoding_data(self, partition_dict):
         print('loading train, val, and test data')
         self.image_data, self.brain_data, self.image_metadata = nsdorg.get_NSD_encoding_images_and_betas(subj = self.subj,
                                                                                       space = self.space,
                                                                                       subj_betas = self.betas,
                                                                                       rep_cocos = self.rep_cocos,
-                                                                                      train_imageset = train_imageset,
-                                                                                      val_imageset = val_imageset,
-                                                                                      test_imageset = test_imageset,
+                                                                                      partition_dict = partition_dict,
                                                                                       mean = False)
         
     def get_ncsnr_mask(self, threshold):
         self.ncsnr_threshold_ = threshold
         self.ncsnr_mask = copy.deepcopy(self.ncsnr[self.included_voxel_idx['full']] > self.ncsnr_threshold_)
+        self.ncsnr_mask_lh = copy.deepcopy(self.ncsnr_lh[self.included_voxel_idx['lh']] > self.ncsnr_threshold_)
+        self.ncsnr_mask_rh = copy.deepcopy(self.ncsnr_rh[self.included_voxel_idx['rh']] > self.ncsnr_threshold_)
 
     def save(self):
         
